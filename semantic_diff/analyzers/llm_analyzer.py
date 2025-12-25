@@ -4,6 +4,8 @@ LLM-based semantic analyzer using Claude
 import os
 import json
 import time
+import random
+import logging
 from datetime import datetime
 from typing import List, Optional
 import anthropic
@@ -13,6 +15,8 @@ from semantic_diff.models import (
     FileChange, SemanticAnalysis, Intent, ImpactMap, Impact,
     RiskAssessment, Risk, ReviewQuestion, RiskLevel
 )
+
+logger = logging.getLogger(__name__)
 
 
 class LLMAnalyzer:
@@ -165,14 +169,20 @@ Be specific and actionable. Avoid generic observations."""
     def _call_api_with_retry(
         self,
         prompt: str,
-        max_retries: int = 3,
-        base_delay: float = 1.0
+        max_retries: Optional[int] = None,
+        base_delay: float = 1.0,
+        max_total_wait: float = 30.0
     ):
         """
-        Call Claude API with exponential backoff retry.
+        Call Claude API with exponential backoff + jitter retry.
         Handles rate limits, timeouts, and transient errors.
+        Respects Retry-After headers when present.
         """
+        if max_retries is None:
+            max_retries = int(os.getenv('SEMANTIC_DIFF_MAX_RETRIES', '3'))
+        
         last_exception = None
+        total_waited = 0.0
         
         for attempt in range(max_retries):
             try:
@@ -186,42 +196,88 @@ Be specific and actionable. Avoid generic observations."""
                 return response
             except anthropic.RateLimitError as e:
                 last_exception = e
-                delay = base_delay * (2 ** attempt)
+                # Check for Retry-After header
+                retry_after = getattr(e, 'retry_after', None)
+                if retry_after:
+                    delay = float(retry_after)
+                else:
+                    delay = base_delay * (2 ** attempt)
+                # Add jitter (10-30% of delay)
+                jitter = delay * random.uniform(0.1, 0.3)
+                delay += jitter
+                
+                if total_waited + delay > max_total_wait:
+                    logger.warning(f"Retry would exceed max_total_wait ({max_total_wait}s), giving up")
+                    break
+                
+                logger.warning(f"Rate limited, retry {attempt + 1}/{max_retries} in {delay:.1f}s")
                 time.sleep(delay)
+                total_waited += delay
+                
             except anthropic.APITimeoutError as e:
                 last_exception = e
-                delay = base_delay * (2 ** attempt)
+                delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay)
+                
+                if total_waited + delay > max_total_wait:
+                    break
+                    
+                logger.warning(f"Timeout, retry {attempt + 1}/{max_retries} in {delay:.1f}s")
                 time.sleep(delay)
+                total_waited += delay
+                
             except anthropic.APIConnectionError as e:
                 last_exception = e
-                delay = base_delay * (2 ** attempt)
+                delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay)
+                
+                if total_waited + delay > max_total_wait:
+                    break
+                    
+                logger.warning(f"Connection error, retry {attempt + 1}/{max_retries} in {delay:.1f}s")
                 time.sleep(delay)
+                total_waited += delay
+                
             except anthropic.APIStatusError as e:
-                # 5xx errors are retryable
                 if e.status_code >= 500:
                     last_exception = e
-                    delay = base_delay * (2 ** attempt)
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay)
+                    
+                    if total_waited + delay > max_total_wait:
+                        break
+                        
+                    logger.warning(f"Server error {e.status_code}, retry {attempt + 1}/{max_retries} in {delay:.1f}s")
                     time.sleep(delay)
+                    total_waited += delay
                 else:
                     raise
         
-        raise RuntimeError(f"API call failed after {max_retries} retries: {last_exception}")
+        raise RuntimeError(f"API call failed after {max_retries} retries (waited {total_waited:.1f}s): {last_exception}")
 
     def _validate_response_data(self, data: dict) -> dict:
         """
         Validate and fill missing fields in LLM response.
         Returns sanitized data with defaults for missing fields.
+        Logs warnings when defaults are applied.
         """
+        defaults_applied = []
+        
         # Ensure intent exists with defaults
         if 'intent' not in data:
             data['intent'] = {}
-        data['intent'].setdefault('summary', 'Unable to determine intent')
-        data['intent'].setdefault('reasoning', 'Analysis incomplete')
-        data['intent'].setdefault('confidence', 0.5)
+            defaults_applied.append('intent')
+        if 'summary' not in data['intent']:
+            data['intent']['summary'] = 'Unable to determine intent'
+            defaults_applied.append('intent.summary')
+        if 'reasoning' not in data['intent']:
+            data['intent']['reasoning'] = 'Analysis incomplete'
+            defaults_applied.append('intent.reasoning')
+        if 'confidence' not in data['intent']:
+            data['intent']['confidence'] = 0.5
+            defaults_applied.append('intent.confidence')
         
         # Ensure impact_map exists with defaults
         if 'impact_map' not in data:
             data['impact_map'] = {}
+            defaults_applied.append('impact_map')
         data['impact_map'].setdefault('direct_impacts', [])
         data['impact_map'].setdefault('indirect_impacts', [])
         data['impact_map'].setdefault('affected_components', [])
@@ -229,13 +285,26 @@ Be specific and actionable. Avoid generic observations."""
         # Ensure risk_assessment exists with defaults
         if 'risk_assessment' not in data:
             data['risk_assessment'] = {}
-        data['risk_assessment'].setdefault('overall_risk', 'medium')
+            defaults_applied.append('risk_assessment')
+        if 'overall_risk' not in data['risk_assessment']:
+            data['risk_assessment']['overall_risk'] = 'medium'
+            defaults_applied.append('risk_assessment.overall_risk')
         data['risk_assessment'].setdefault('risks', [])
         data['risk_assessment'].setdefault('breaking_changes', False)
         data['risk_assessment'].setdefault('requires_migration', False)
         
         # Ensure review_questions exists
         data.setdefault('review_questions', [])
+        
+        # Log warning if defaults were applied
+        if defaults_applied:
+            logger.warning(
+                f"LLM response missing fields, defaults applied: {', '.join(defaults_applied)}. "
+                "This may indicate a prompt issue or API degradation."
+            )
+            # Mark low confidence when critical fields were missing
+            if any(field in defaults_applied for field in ['intent', 'intent.summary', 'risk_assessment']):
+                data['intent']['confidence'] = min(data['intent']['confidence'], 0.3)
         
         return data
     

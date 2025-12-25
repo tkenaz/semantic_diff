@@ -147,7 +147,24 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 - [x] sys.path.insert костыль — удалён (cli.py)
 - [x] Retry логика для API — добавлен `_call_api_with_retry` (llm_analyzer.py)
 - [x] Валидация JSON ответа — добавлен `_validate_response_data` (llm_analyzer.py)
+- [x] **Протестировал на себе** — semantic-diff проанализировал свой же коммит!
+- [x] Jitter добавлен в retry (thundering herd fix)
+- [x] Retry-After header support
+- [x] max_total_wait limit (30s default)
+- [x] max_retries configurable через SEMANTIC_DIFF_MAX_RETRIES
+- [x] Logging когда defaults применяются
+- [x] Auto-reduce confidence когда критические поля missing
 
-### TODO сегодня:
-- [ ] Протестировать фиксы
-- [ ] Подумать о позиционировании продукта
+### Meta-insight:
+Инструмент нашёл баги в самом себе. Это валидация концепции — он реально полезен.
+
+### Стратегическое решение:
+**Фаза 1** — CLI tool (Homebrew, PyPI, freemium)
+**Фаза 2** — GitHub Action (auto-comment на PR, $19/repo/month)
+
+### Следующие шаги:
+- [ ] Тесты (pytest)
+- [ ] Кэширование результатов
+- [ ] Batch mode (диапазон коммитов)
+- [ ] GitHub Action MVP
+- [ ] Landing page на kenaz.ai
