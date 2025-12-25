@@ -171,7 +171,7 @@ Be specific and actionable. Avoid generic observations."""
         prompt: str,
         max_retries: Optional[int] = None,
         base_delay: float = 1.0,
-        max_total_wait: float = 30.0
+        max_total_wait: Optional[float] = None
     ):
         """
         Call Claude API with exponential backoff + jitter retry.
@@ -180,6 +180,8 @@ Be specific and actionable. Avoid generic observations."""
         """
         if max_retries is None:
             max_retries = int(os.getenv('SEMANTIC_DIFF_MAX_RETRIES', '3'))
+        if max_total_wait is None:
+            max_total_wait = float(os.getenv('SEMANTIC_DIFF_MAX_WAIT', '30.0'))
         
         last_exception = None
         total_waited = 0.0
@@ -196,10 +198,15 @@ Be specific and actionable. Avoid generic observations."""
                 return response
             except anthropic.RateLimitError as e:
                 last_exception = e
-                # Check for Retry-After header
+                # Check for Retry-After header (can be seconds or HTTP-date)
                 retry_after = getattr(e, 'retry_after', None)
                 if retry_after:
-                    delay = float(retry_after)
+                    try:
+                        delay = float(retry_after)
+                    except (ValueError, TypeError):
+                        # Retry-After might be HTTP-date format, fall back to exponential
+                        logger.debug(f"Could not parse Retry-After '{retry_after}', using exponential backoff")
+                        delay = base_delay * (2 ** attempt)
                 else:
                     delay = base_delay * (2 ** attempt)
                 # Add jitter (10-30% of delay)

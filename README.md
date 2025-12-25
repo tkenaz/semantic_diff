@@ -34,6 +34,7 @@ Create a `.env` file:
 ANTHROPIC_API_KEY=sk-ant-...
 SEMANTIC_DIFF_MODEL=claude-sonnet-4-5-20250929  # or claude-opus-4-5-20251101
 SEMANTIC_DIFF_MAX_RETRIES=3  # optional, API retry attempts
+SEMANTIC_DIFF_MAX_WAIT=30.0  # optional, max total retry wait time in seconds
 ```
 
 ## Usage

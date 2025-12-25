@@ -156,7 +156,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 - [x] Auto-reduce confidence когда критические поля missing
 
 ### Meta-insight:
-Инструмент нашёл баги в самом себе. Это валидация концепции — он реально полезен.
+Инструмент нашёл баги в самом себе. Дважды. Второй раз — в том, что я пофиксил в первый раз.
+Это валидация концепции — он реально полезен для iterative development.
+
+### Итоговые фиксы сессии:
+- Retry-After header parsing с fallback на exponential backoff
+- max_total_wait теперь configurable через SEMANTIC_DIFF_MAX_WAIT
+- Все известные баги закрыты
 
 ### Стратегическое решение:
 **Фаза 1** — CLI tool (Homebrew, PyPI, freemium)
