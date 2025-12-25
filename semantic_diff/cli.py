@@ -6,9 +6,6 @@ from pathlib import Path
 import sys
 import os
 
-# Add parent to path for development
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from semantic_diff.parsers.git_parser import GitParser
 from semantic_diff.analyzers.llm_analyzer import LLMAnalyzer
 from semantic_diff.formatters.console_formatter import ConsoleFormatter

@@ -92,16 +92,18 @@ class GitParser:
         if not commit.parents:
             for item in commit.tree.traverse():
                 if item.type == 'blob':
+                    content = ""
+                    diff_content = "[binary file]"
                     try:
                         content = item.data_stream.read().decode('utf-8', errors='replace')
                         diff_content = f"+{content}"
-                    except:
-                        diff_content = "[binary file]"
+                    except (UnicodeDecodeError, IOError, OSError):
+                        pass  # Keep defaults: empty content, binary marker
                     
                     changes.append(FileChange(
                         path=item.path,
                         change_type='added',
-                        additions=len(content.split('\n')) if 'content' in dir() else 0,
+                        additions=len(content.split('\n')) if content else 0,
                         deletions=0,
                         diff_content=diff_content[:5000],  # Limit size
                         language=self.detect_language(item.path)
@@ -130,7 +132,7 @@ class GitParser:
             # Get diff content
             try:
                 diff_content = diff.diff.decode('utf-8', errors='replace')
-            except:
+            except (UnicodeDecodeError, AttributeError, TypeError):
                 diff_content = "[binary file]"
             
             # Count additions/deletions

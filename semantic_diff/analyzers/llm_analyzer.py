@@ -3,6 +3,7 @@ LLM-based semantic analyzer using Claude
 """
 import os
 import json
+import time
 from datetime import datetime
 from typing import List, Optional
 import anthropic
@@ -161,6 +162,83 @@ Be specific and actionable. Avoid generic observations."""
         except json.JSONDecodeError as e:
             raise ValueError(f"Failed to parse LLM response as JSON: {e}\nResponse: {response_text[:500]}")
     
+    def _call_api_with_retry(
+        self,
+        prompt: str,
+        max_retries: int = 3,
+        base_delay: float = 1.0
+    ):
+        """
+        Call Claude API with exponential backoff retry.
+        Handles rate limits, timeouts, and transient errors.
+        """
+        last_exception = None
+        
+        for attempt in range(max_retries):
+            try:
+                response = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=4096,
+                    messages=[
+                        {"role": "user", "content": prompt}
+                    ]
+                )
+                return response
+            except anthropic.RateLimitError as e:
+                last_exception = e
+                delay = base_delay * (2 ** attempt)
+                time.sleep(delay)
+            except anthropic.APITimeoutError as e:
+                last_exception = e
+                delay = base_delay * (2 ** attempt)
+                time.sleep(delay)
+            except anthropic.APIConnectionError as e:
+                last_exception = e
+                delay = base_delay * (2 ** attempt)
+                time.sleep(delay)
+            except anthropic.APIStatusError as e:
+                # 5xx errors are retryable
+                if e.status_code >= 500:
+                    last_exception = e
+                    delay = base_delay * (2 ** attempt)
+                    time.sleep(delay)
+                else:
+                    raise
+        
+        raise RuntimeError(f"API call failed after {max_retries} retries: {last_exception}")
+
+    def _validate_response_data(self, data: dict) -> dict:
+        """
+        Validate and fill missing fields in LLM response.
+        Returns sanitized data with defaults for missing fields.
+        """
+        # Ensure intent exists with defaults
+        if 'intent' not in data:
+            data['intent'] = {}
+        data['intent'].setdefault('summary', 'Unable to determine intent')
+        data['intent'].setdefault('reasoning', 'Analysis incomplete')
+        data['intent'].setdefault('confidence', 0.5)
+        
+        # Ensure impact_map exists with defaults
+        if 'impact_map' not in data:
+            data['impact_map'] = {}
+        data['impact_map'].setdefault('direct_impacts', [])
+        data['impact_map'].setdefault('indirect_impacts', [])
+        data['impact_map'].setdefault('affected_components', [])
+        
+        # Ensure risk_assessment exists with defaults
+        if 'risk_assessment' not in data:
+            data['risk_assessment'] = {}
+        data['risk_assessment'].setdefault('overall_risk', 'medium')
+        data['risk_assessment'].setdefault('risks', [])
+        data['risk_assessment'].setdefault('breaking_changes', False)
+        data['risk_assessment'].setdefault('requires_migration', False)
+        
+        # Ensure review_questions exists
+        data.setdefault('review_questions', [])
+        
+        return data
+    
     def analyze(
         self,
         commit_info: dict,
@@ -182,14 +260,8 @@ Be specific and actionable. Avoid generic observations."""
             diffs=self._format_diffs(files)
         )
         
-        # Call Claude
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=4096,
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
-        )
+        # Call Claude with retry
+        response = self._call_api_with_retry(prompt)
         
         self.last_usage = {
             'input_tokens': response.usage.input_tokens,
@@ -197,9 +269,10 @@ Be specific and actionable. Avoid generic observations."""
             'total_tokens': response.usage.input_tokens + response.usage.output_tokens
         }
         
-        # Parse response
+        # Parse and validate response
         response_text = response.content[0].text
         data = self._parse_response(response_text)
+        data = self._validate_response_data(data)
         
         # Build structured response
         intent = Intent(
