@@ -1,0 +1,89 @@
+name: Semantic Diff PR Analysis
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install semantic-diff
+        run: pip install semantic-diff
+      
+      - name: Analyze PR commits
+        id: analysis
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Get the merge base and analyze
+          BASE_SHA=${{ github.event.pull_request.base.sha }}
+          HEAD_SHA=${{ github.event.pull_request.head.sha }}
+          
+          # Analyze the latest commit
+          OUTPUT=$(semantic-diff HEAD --json 2>&1) || true
+          
+          # Save for comment
+          echo "ANALYSIS<<ENDOFANALYSIS" >> $GITHUB_OUTPUT
+          echo "$OUTPUT" >> $GITHUB_OUTPUT
+          echo "ENDOFANALYSIS" >> $GITHUB_OUTPUT
+      
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const analysis = `${{ steps.analysis.outputs.ANALYSIS }}`;
+            
+            let body;
+            try {
+              const data = JSON.parse(analysis);
+              body = `## 🔍 Semantic Diff Analysis
+              
+### 🎯 Intent
+**${data.intent.summary}**
+
+${data.intent.reasoning}
+
+_Confidence: ${Math.round(data.intent.confidence * 100)}%_
+
+### ⚠️ Risk Assessment
+**Overall Risk: ${data.risk_assessment.overall_risk.toUpperCase()}**
+
+${data.risk_assessment.risks.map(r => `- **[${r.severity}]** ${r.description}`).join('\n')}
+
+${data.risk_assessment.breaking_changes ? '⚠️ **Breaking changes detected**' : ''}
+
+### ❓ Review Questions
+${data.review_questions.map((q, i) => `${i+1}. ${q.question}`).join('\n')}
+
+---
+_Analyzed by [semantic-diff](https://github.com/tkenaz/semantic_diff)_`;
+            } catch (e) {
+              body = `## 🔍 Semantic Diff Analysis
+
+⚠️ Could not parse analysis output:
+\`\`\`
+${analysis}
+\`\`\``;
+            }
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

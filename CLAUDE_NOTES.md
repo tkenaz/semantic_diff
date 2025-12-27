@@ -174,3 +174,58 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 - [ ] Batch mode (диапазон коммитов)
 - [ ] GitHub Action MVP
 - [ ] Landing page на kenaz.ai
+
+---
+
+## СТРАТЕГИЧЕСКИЙ PIVOT — 25.12.2025
+
+### Проблема с текущим позиционированием
+
+"AI semantic code review" — размытый рынок:
+- GitHub Copilot уже делает похожее
+- ROI неочевиден (API calls дорогие, senior сам видит intent)
+- Target audience размыт
+
+### Новое направление: Security + Compliance Scanner
+
+**Позиционирование:** "Automated security & compliance checking for every commit"
+
+**Почему это лучше:**
+1. Боль с деньгами — компании *обязаны* это делать
+2. Синергия с Kenaz (Privacy Architecture, GDPR/HIPAA)
+3. Регуляторы создали спрос — не нужен product-market fit
+4. Enterprise платят за compliance tooling
+
+### Что нужно добавить
+
+**Security:**
+- [ ] CVE/vulnerability database integration
+- [ ] Паттерны: SQL injection, XSS, hardcoded secrets
+- [ ] OWASP Top 10 в промпте
+- [ ] CVSS severity scoring
+- [ ] SARIF output (GitHub Security tab integration)
+
+**Compliance:**
+- [ ] Профили: --profile=hipaa, --profile=gdpr, --profile=soc2
+- [ ] PII/PHI detection markers
+- [ ] Audit trail (сохранение всех анализов)
+- [ ] PDF reports для аудиторов
+
+**Техническое:**
+- [ ] Новый промпт с security/compliance фокусом
+- [ ] Локальный режим (для тех кто не хочет слать код в облако)
+- [ ] Config file (.semantic-diff.yaml) с профилями
+
+### Оценка работы
+
+MVP Security Scanner: ~1 неделя
+- День 1-2: Новый промпт, SARIF formatter
+- День 3-4: Профили конфигурации
+- День 5: GitHub Action
+- День 6-7: Документация, тестирование
+
+### Конкуренты
+
+- Snyk, SonarQube, Semgrep — статические, не семантические
+- Наше преимущество: ловим *логические* уязвимости, понимаем intent
+
