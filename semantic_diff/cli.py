@@ -9,6 +9,10 @@ import os
 from semantic_diff.parsers.git_parser import GitParser
 from semantic_diff.analyzers.llm_analyzer import LLMAnalyzer
 from semantic_diff.formatters.console_formatter import ConsoleFormatter
+from semantic_diff.formatters.markdown_formatter import MarkdownFormatter
+
+
+REPORTS_DIR_NAME = "semantic_diff_reports"
 
 
 @click.command()
@@ -16,8 +20,9 @@ from semantic_diff.formatters.console_formatter import ConsoleFormatter
 @click.option('--repo', '-r', default='.', help='Path to git repository')
 @click.option('--model', '-m', default=None, help='Model to use (default: from .env)')
 @click.option('--json', 'output_json', is_flag=True, help='Output as JSON')
+@click.option('--save', '-s', is_flag=True, help='Save report to semantic_diff_reports/ in repo root')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def main(commit_hash: str, repo: str, model: str, output_json: bool, verbose: bool):
+def main(commit_hash: str, repo: str, model: str, output_json: bool, save: bool, verbose: bool):
     """
     Analyze a git commit semantically.
     
@@ -70,6 +75,16 @@ def main(commit_hash: str, repo: str, model: str, output_json: bool, verbose: bo
         else:
             formatter = ConsoleFormatter()
             formatter.format(analysis)
+
+        # Save to file if requested
+        if save:
+            # Use git working directory as root
+            git_root = Path(parser.repo.working_dir)
+            reports_dir = git_root / REPORTS_DIR_NAME
+
+            md_formatter = MarkdownFormatter()
+            saved_path = md_formatter.save(analysis, reports_dir)
+            click.echo(f"\nReport saved: {saved_path}")
         
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)

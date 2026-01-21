@@ -1,0 +1,196 @@
+name: 'Semantic Diff'
+description: 'AI-powered semantic analysis of git commits. Understand intent, assess risk, get review questions.'
+author: 'Kenaz GmbH'
+
+branding:
+  icon: 'git-commit'
+  color: 'blue'
+
+inputs:
+  anthropic_api_key:
+    description: 'Anthropic API key for Claude'
+    required: true
+
+  model:
+    description: 'Model to use (claude-sonnet-4-5-20250929 or claude-opus-4-5-20251101)'
+    required: false
+    default: 'claude-sonnet-4-5-20250929'
+
+  fail_on_risk:
+    description: 'Fail the check if risk level meets or exceeds this (low, medium, high, critical, never)'
+    required: false
+    default: 'never'
+
+  comment_on_pr:
+    description: 'Post analysis as PR comment'
+    required: false
+    default: 'true'
+
+  base_ref:
+    description: 'Base ref for comparison (default: auto-detect from PR)'
+    required: false
+    default: ''
+
+outputs:
+  risk_level:
+    description: 'Overall risk level (low, medium, high, critical)'
+    value: ${{ steps.analyze.outputs.risk_level }}
+
+  analysis_json:
+    description: 'Full analysis as JSON'
+    value: ${{ steps.analyze.outputs.analysis_json }}
+
+  report_path:
+    description: 'Path to saved markdown report'
+    value: ${{ steps.analyze.outputs.report_path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install semantic-diff
+      shell: bash
+      run: |
+        pip install semantic-diff
+
+    - name: Determine commits to analyze
+      id: commits
+      shell: bash
+      run: |
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          # For PRs, analyze all commits in the PR
+          BASE="${{ inputs.base_ref || github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          echo "base=$BASE" >> $GITHUB_OUTPUT
+          echo "head=$HEAD" >> $GITHUB_OUTPUT
+          echo "mode=pr" >> $GITHUB_OUTPUT
+        else
+          # For push, analyze the pushed commit
+          echo "head=${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "mode=commit" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Run semantic-diff
+      id: analyze
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        SEMANTIC_DIFF_MODEL: ${{ inputs.model }}
+      run: |
+        # Run analysis and capture JSON output
+        ANALYSIS=$(semantic-diff ${{ steps.commits.outputs.head }} --json)
+
+        # Extract risk level
+        RISK_LEVEL=$(echo "$ANALYSIS" | jq -r '.risk_assessment.overall_risk')
+        echo "risk_level=$RISK_LEVEL" >> $GITHUB_OUTPUT
+
+        # Save full JSON (escape for multiline)
+        echo "analysis_json<<EOF" >> $GITHUB_OUTPUT
+        echo "$ANALYSIS" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+        # Save markdown report
+        semantic-diff ${{ steps.commits.outputs.head }} --save
+        REPORT_PATH=$(ls -t semantic_diff_reports/*.md | head -1)
+        echo "report_path=$REPORT_PATH" >> $GITHUB_OUTPUT
+
+        # Store for PR comment
+        echo "$ANALYSIS" > /tmp/semantic_diff_analysis.json
+
+    - name: Comment on PR
+      if: inputs.comment_on_pr == 'true' && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const analysis = JSON.parse(fs.readFileSync('/tmp/semantic_diff_analysis.json', 'utf8'));
+
+          const riskEmoji = {
+            'low': '✅',
+            'medium': '⚠️',
+            'high': '🔶',
+            'critical': '🔴'
+          };
+
+          const risk = analysis.risk_assessment.overall_risk;
+          const emoji = riskEmoji[risk] || '❓';
+
+          let body = `## ${emoji} Semantic Diff Analysis\n\n`;
+          body += `**Risk Level:** ${risk.toUpperCase()}\n\n`;
+
+          body += `### 🎯 Intent\n`;
+          body += `${analysis.intent.summary}\n\n`;
+          body += `*Confidence: ${Math.round(analysis.intent.confidence * 100)}%*\n\n`;
+
+          if (analysis.risk_assessment.risks.length > 0) {
+            body += `### ⚠️ Risks\n`;
+            for (const r of analysis.risk_assessment.risks) {
+              body += `- **[${r.severity}]** ${r.description}\n`;
+              if (r.mitigation) {
+                body += `  - 💡 ${r.mitigation}\n`;
+              }
+            }
+            body += '\n';
+          }
+
+          if (analysis.review_questions.length > 0) {
+            body += `### ❓ Review Questions\n`;
+            for (const q of analysis.review_questions.slice(0, 5)) {
+              body += `- ${q.question}\n`;
+            }
+            body += '\n';
+          }
+
+          body += `---\n*Analyzed by [semantic-diff](https://github.com/kenaz-gmbh/semantic-diff)*`;
+
+          // Find existing comment to update
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number
+          });
+
+          const botComment = comments.find(c =>
+            c.body.includes('Semantic Diff Analysis') &&
+            c.user.type === 'Bot'
+          );
+
+          if (botComment) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: botComment.id,
+              body: body
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+          }
+
+    - name: Check risk threshold
+      if: inputs.fail_on_risk != 'never'
+      shell: bash
+      run: |
+        RISK="${{ steps.analyze.outputs.risk_level }}"
+        THRESHOLD="${{ inputs.fail_on_risk }}"
+
+        # Risk levels in order
+        declare -A RISK_ORDER=( ["low"]=1 ["medium"]=2 ["high"]=3 ["critical"]=4 )
+
+        RISK_NUM=${RISK_ORDER[$RISK]}
+        THRESHOLD_NUM=${RISK_ORDER[$THRESHOLD]}
+
+        if [ "$RISK_NUM" -ge "$THRESHOLD_NUM" ]; then
+          echo "::error::Risk level $RISK meets or exceeds threshold $THRESHOLD"
+          exit 1
+        fi
+
+        echo "Risk level $RISK is below threshold $THRESHOLD"
