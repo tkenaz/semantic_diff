@@ -1,6 +1,7 @@
 """
 Tests for GitParser - git diff parser
 """
+
 import shutil
 
 import pytest

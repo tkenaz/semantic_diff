@@ -1,6 +1,7 @@
 """
 Git diff parser - extracts structured information from git commits
 """
+
 import os
 from pathlib import Path
 from typing import List, Optional

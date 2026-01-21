@@ -1,6 +1,7 @@
 """
 Tests for LLMAnalyzer - Claude-based semantic analyzer
 """
+
 import os
 from unittest.mock import Mock, patch
 
@@ -430,18 +431,14 @@ class TestAnalyze:
         """Test analyze returns properly structured SemanticAnalysis"""
         # Mock response
         mock_response = Mock()
-        mock_response.content = [
-            Mock(
-                text="""```json
+        mock_response.content = [Mock(text="""```json
 {
     "intent": {"summary": "Test change", "reasoning": "Testing", "confidence": 0.9},
     "impact_map": {"direct_impacts": [], "indirect_impacts": [], "affected_components": []},
     "risk_assessment": {"overall_risk": "low", "risks": [], "breaking_changes": false, "requires_migration": false},
     "review_questions": []
 }
-```"""
-            )
-        ]
+```""")]
         mock_response.usage.input_tokens = 100
         mock_response.usage.output_tokens = 50
 

@@ -1,6 +1,7 @@
 """
 Markdown formatter for semantic diff output - saves to files
 """
+
 import html
 import re
 from datetime import datetime

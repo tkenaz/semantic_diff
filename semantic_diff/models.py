@@ -1,6 +1,7 @@
 """
 Data models for semantic diff analysis
 """
+
 from enum import Enum
 from typing import List, Optional
 

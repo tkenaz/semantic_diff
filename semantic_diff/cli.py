@@ -1,6 +1,7 @@
 """
 CLI interface for semantic-diff
 """
+
 import os
 import stat
 import sys

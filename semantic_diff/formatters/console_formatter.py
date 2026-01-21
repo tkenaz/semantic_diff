@@ -1,6 +1,7 @@
 """
 Console formatter for semantic diff output using Rich
 """
+
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
@@ -143,7 +144,9 @@ class ConsoleFormatter:
                 if r.mitigation:
                     risk_text.append(f"     💡 Mitigation: {r.mitigation}\n", style="dim")
                 if r.edge_cases:
-                    risk_text.append(f"     ⚡ Edge cases: {', '.join(r.edge_cases)}\n", style="dim")
+                    risk_text.append(
+                        f"     ⚡ Edge cases: {', '.join(r.edge_cases)}\n", style="dim"
+                    )
 
         self.console.print(Panel(risk_text, title="⚠️  Risk Assessment", border_style=risk_color))
 

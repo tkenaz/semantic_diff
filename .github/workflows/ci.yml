@@ -19,13 +19,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install ruff black
+          pip install -e ".[dev]"
 
       - name: Check formatting
-        run: black --check semantic_diff
+        run: black --check semantic_diff tests
 
       - name: Lint
-        run: ruff check semantic_diff
+        run: ruff check semantic_diff tests
 
   test:
     runs-on: ubuntu-latest

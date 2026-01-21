@@ -1,6 +1,7 @@
 """
 Shared pytest fixtures for semantic_diff tests
 """
+
 from datetime import datetime
 
 import pytest
