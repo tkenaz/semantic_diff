@@ -6,10 +6,10 @@ AI-powered semantic analysis of git commits. Goes beyond `git diff` to show **in
 
 Regular `git diff` shows *what* changed. `semantic-diff` shows:
 
-- **🎯 Intent** — What was the developer trying to accomplish? (not what changed, but *why*)
-- **🗺️ Impact Map** — What parts of the system are affected directly and indirectly?
-- **⚠️ Risk Assessment** — What could break? Edge cases? Breaking changes?
-- **❓ Review Questions** — What should a reviewer ask the author?
+- **Intent** — What was the developer trying to accomplish? (not what changed, but *why*)
+- **Impact Map** — What parts of the system are affected directly and indirectly?
+- **Risk Assessment** — What could break? Edge cases? Breaking changes?
+- **Review Questions** — What should a reviewer ask the author?
 
 ## Installation
 
@@ -59,28 +59,28 @@ semantic-diff HEAD -v
 ## Example Output
 
 ```
-╭──────────────────── 📋 Semantic Diff Analysis ────────────────────╮
+╭──────────────────── Semantic Diff Analysis ───────────────────────╮
 │ Fix authentication bypass in login endpoint                       │
-│                                                                    │
-│ abc12345 by developer@example.com                                  │
-│ 2024-12-22T10:30:00                                                │
-╰────────────────────────────────────────────────────────────────────╯
+│                                                                   │
+│ abc12345 by developer@example.com                                 │
+│ 2024-12-22T10:30:00                                               │
+╰───────────────────────────────────────────────────────────────────╯
 
-╭──────────────────────── 🎯 Intent ────────────────────────╮
-│ Prevent unauthorized access by validating session tokens  │
-│ before processing login requests.                         │
+╭──────────────────────── Intent ────────────────────────────╮
+│ Prevent unauthorized access by validating session tokens   │
+│ before processing login requests.                          │
 │                                                            │
 │ Confidence: [████████░░] 85%                               │
 ╰────────────────────────────────────────────────────────────╯
 
-╭──────────────────── ⚠️ Risk Assessment ───────────────────╮
-│ Overall Risk: ⚡ HIGH                                      │
+╭──────────────────── Risk Assessment ───────────────────────╮
+│ Overall Risk: ⚡ HIGH                                       │
 │                                                            │
-│ ⚠️  BREAKING CHANGES DETECTED                              │
+│ BREAKING CHANGES DETECTED                                  │
 │                                                            │
 │ Identified Risks:                                          │
-│   ⚡ [high] Existing sessions may be invalidated           │
-│      💡 Mitigation: Add migration for active sessions      │
+│   ⚡ [high] Existing sessions may be invalidated            │
+│      Mitigation: Add migration for active sessions         │
 ╰────────────────────────────────────────────────────────────╯
 ```
 

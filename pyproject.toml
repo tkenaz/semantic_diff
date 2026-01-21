@@ -39,7 +39,7 @@ dev = [
 ]
 
 [project.scripts]
-semantic-diff = "semantic_diff.cli:main"
+semantic-diff = "semantic_diff.cli:cli"
 
 [project.urls]
 Homepage = "https://github.com/tkenaz/semantic_diff"
