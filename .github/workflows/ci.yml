@@ -51,9 +51,13 @@ jobs:
           fail_ci_if_error: false
 
   # Self-analysis: semantic-diff analyzes its own commits
+  # Skip on forks (no access to secrets) and dependabot
   semantic-analysis:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
     steps:
       - uses: actions/checkout@v4
         with:

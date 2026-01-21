@@ -1,6 +1,8 @@
 """
 Markdown formatter for semantic diff output - saves to files
 """
+import html
+import re
 from pathlib import Path
 from datetime import datetime
 
@@ -20,18 +22,37 @@ class MarkdownFormatter:
     def _risk_icon(self, level: RiskLevel) -> str:
         return self.RISK_ICONS.get(level, "•")
 
+    def _escape_md(self, text: str) -> str:
+        """Escape markdown special characters and HTML to prevent injection"""
+        if not text:
+            return ""
+        # First escape HTML entities
+        text = html.escape(text, quote=True)
+        # Escape markdown special chars that could be used for injection
+        # but preserve basic formatting in LLM output
+        text = re.sub(r'([<>])', r'\\\1', text)
+        return text
+
+    def _escape_inline_code(self, text: str) -> str:
+        """Escape backticks in inline code content"""
+        if not text:
+            return ""
+        return text.replace('`', '\\`')
+
     def format(self, analysis: SemanticAnalysis) -> str:
         """Generate markdown string from analysis"""
         lines = []
 
-        # Header
+        # Header - escape user-controlled content
         lines.append(f"# Semantic Diff: {analysis.commit_hash[:8]}")
         lines.append("")
         lines.append(f"**Commit:** `{analysis.commit_hash}`")
-        lines.append(f"**Author:** {analysis.author}")
+        lines.append(f"**Author:** {self._escape_md(analysis.author)}")
         lines.append(f"**Date:** {analysis.date}")
         lines.append("")
-        lines.append(f"> {analysis.commit_message}")
+        # Escape commit message - could contain malicious markdown/HTML
+        escaped_msg = self._escape_md(analysis.commit_message)
+        lines.append(f"> {escaped_msg}")
         lines.append("")
 
         # Files Changed
@@ -41,7 +62,9 @@ class MarkdownFormatter:
         lines.append("|------|--------|---|---|------|")
         for f in analysis.files_changed:
             path = f.path[:50] + "..." if len(f.path) > 50 else f.path
-            lines.append(f"| `{path}` | {f.change_type} | {f.additions} | {f.deletions} | {f.language or '-'} |")
+            # Escape file path - could contain injection attempts
+            escaped_path = self._escape_inline_code(path)
+            lines.append(f"| `{escaped_path}` | {f.change_type} | {f.additions} | {f.deletions} | {f.language or '-'} |")
         lines.append("")
 
         # Intent
