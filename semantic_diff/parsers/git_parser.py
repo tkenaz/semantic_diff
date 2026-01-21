@@ -4,6 +4,7 @@ Git diff parser - extracts structured information from git commits
 import os
 from typing import Optional, List
 from git import Repo, InvalidGitRepositoryError
+from git.exc import NoSuchPathError
 from pathlib import Path
 
 from semantic_diff.models import FileChange
@@ -55,6 +56,8 @@ class GitParser:
             self.repo = Repo(self.repo_path)
         except InvalidGitRepositoryError:
             raise ValueError(f"Not a git repository: {self.repo_path}")
+        except NoSuchPathError:
+            raise ValueError(f"Path does not exist: {self.repo_path}")
     
     def get_commit(self, commit_hash: str):
         """Get a commit by hash (full or short)"""
@@ -168,9 +171,17 @@ class GitParser:
             'has_ci': False,
             'package_manager': None,
         }
-        
+
+        # Handle empty repos (no commits yet)
+        try:
+            tree = self.repo.tree()
+        except ValueError:
+            # Empty repo - no HEAD yet
+            context['languages'] = []
+            return context
+
         # Check root files
-        for item in self.repo.tree().traverse():
+        for item in tree.traverse():
             if item.type == 'blob':
                 path = item.path
                 

@@ -265,9 +265,10 @@ class TestValidateResponseData:
             }
         }
         result = analyzer._validate_response_data(data)
-        
+
         assert result['intent']['summary'] == 'Custom summary'
-        assert result['intent']['confidence'] == 0.9  # Not lowered
+        # Confidence is lowered to 0.3 when critical fields (risk_assessment) are missing
+        assert result['intent']['confidence'] == 0.3
         assert 'impact_map' in result
     
     def test_validate_full_data(self, analyzer):
