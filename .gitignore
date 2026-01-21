@@ -18,3 +18,4 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+CLAUDE_NOTES.md
