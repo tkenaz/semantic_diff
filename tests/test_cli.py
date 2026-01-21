@@ -2,22 +2,14 @@
 Tests for CLI interface
 """
 import json
-import os
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import pytest
 from click.testing import CliRunner
-from git import Repo, Actor
+from git import Repo
 
 from semantic_diff.cli import main
-from semantic_diff.models import (
-    SemanticAnalysis,
-    FileChange,
-    Intent,
-    ImpactMap,
-    RiskAssessment,
-    RiskLevel,
-)
 
 
 class TestCLIHelp:
@@ -31,6 +23,17 @@ class TestCLIHelp:
         assert result.exit_code == 0
         assert "Usage:" in result.output
         assert "semantic-diff" in result.output or "main" in result.output
+        # Main help shows commands list
+        assert "analyze" in result.output
+        assert "init" in result.output
+        assert "uninstall" in result.output
+
+    def test_analyze_help_shows_options(self):
+        """Test that analyze --help shows commit options"""
+        runner = CliRunner()
+        result = runner.invoke(main, ["analyze", "--help"])
+
+        assert result.exit_code == 0
         assert "COMMIT_HASH" in result.output
         assert "--repo" in result.output
         assert "--json" in result.output
@@ -50,7 +53,7 @@ class TestCLIBasicExecution:
     def test_nonexistent_repo_exits_with_error(self):
         """Test that nonexistent repository path exits with code 1"""
         runner = CliRunner()
-        result = runner.invoke(main, ["HEAD", "--repo", "/nonexistent/path/to/repo"])
+        result = runner.invoke(main, ["analyze", "HEAD", "--repo", "/nonexistent/path/to/repo"])
 
         assert result.exit_code == 1
         assert "Error:" in result.output
@@ -63,7 +66,7 @@ class TestCLIBasicExecution:
         runner = CliRunner()
 
         result = runner.invoke(
-            main, ["nonexistent_commit_hash_12345", "--repo", repo_path]
+            main, ["analyze", "nonexistent_commit_hash_12345", "--repo", repo_path]
         )
 
         assert result.exit_code == 1
@@ -89,7 +92,7 @@ class TestCLIWithMockedAnalyzer:
         repo_path, repo, commit_hash = temp_git_repo
         runner = CliRunner()
 
-        result = runner.invoke(main, ["HEAD", "--repo", repo_path, "--json"])
+        result = runner.invoke(main, ["analyze", "HEAD", "--repo", repo_path, "--json"])
 
         assert result.exit_code == 0
 
@@ -112,7 +115,7 @@ class TestCLIWithMockedAnalyzer:
         repo_path, repo, commit_hash = temp_git_repo
         runner = CliRunner()
 
-        result = runner.invoke(main, ["HEAD", "--repo", repo_path, "--json"])
+        result = runner.invoke(main, ["analyze", "HEAD", "--repo", repo_path, "--json"])
 
         data = json.loads(result.output)
 
@@ -121,41 +124,35 @@ class TestCLIWithMockedAnalyzer:
         assert data["author"] == mock_semantic_analysis.author
         assert data["intent"]["summary"] == mock_semantic_analysis.intent.summary
 
-    def test_console_output_is_formatted(
-        self, temp_git_repo, mock_llm_analyzer, capsys
-    ):
+    def test_console_output_is_formatted(self, temp_git_repo, mock_llm_analyzer, capsys):
         """Test that console output (non-JSON) is formatted nicely"""
         repo_path, repo, commit_hash = temp_git_repo
         runner = CliRunner()
 
-        result = runner.invoke(main, ["HEAD", "--repo", repo_path])
+        result = runner.invoke(main, ["analyze", "HEAD", "--repo", repo_path])
 
         assert result.exit_code == 0
         # Rich formatter adds boxes and formatting
         # Just check that output is not JSON
         assert not result.output.strip().startswith("{")
 
-    def test_verbose_flag_shows_debug_info(
-        self, temp_git_repo, mock_llm_analyzer
-    ):
+    def test_verbose_flag_shows_debug_info(self, temp_git_repo, mock_llm_analyzer):
         """Test that -v/--verbose flag shows debug information"""
         repo_path, repo, commit_hash = temp_git_repo
         runner = CliRunner()
 
-        result = runner.invoke(main, ["HEAD", "--repo", repo_path, "-v"])
+        result = runner.invoke(main, ["analyze", "HEAD", "--repo", repo_path, "-v"])
 
         assert result.exit_code == 0
         # Should show verbose messages
         assert "Initializing" in result.output or "Getting commit" in result.output
 
-    def test_save_flag_creates_report_file(
-        self, temp_git_repo, mock_llm_analyzer
-    ):
+    def test_save_flag_creates_report_file(self, temp_git_repo, mock_llm_analyzer):
         """Test that --save flag creates markdown report file"""
         repo_path, repo, commit_hash = temp_git_repo
         runner = CliRunner()
 
-        result = runner.invoke(main, ["HEAD", "--repo", repo_path, "--save"])
+        result = runner.invoke(main, ["analyze", "HEAD", "--repo", repo_path, "--save"])
 
         assert result.exit_code == 0
 
@@ -171,14 +168,12 @@ class TestCLIWithMockedAnalyzer:
         md_files = list(reports_dir.glob("*.md"))
         assert len(md_files) > 0
 
-    def test_save_flag_file_contains_markdown(
-        self, temp_git_repo, mock_llm_analyzer
-    ):
+    def test_save_flag_file_contains_markdown(self, temp_git_repo, mock_llm_analyzer):
         """Test that saved report contains valid markdown"""
         repo_path, repo, commit_hash = temp_git_repo
         runner = CliRunner()
 
-        result = runner.invoke(main, ["HEAD", "--repo", repo_path, "--save"])
+        runner.invoke(main, ["analyze", "HEAD", "--repo", repo_path, "--save"])
 
         # Find the saved file
         reports_dir = Path(repo_path) / "semantic_diff_reports"
@@ -200,9 +195,7 @@ class TestCLIWithMockedAnalyzer:
             mock_analyzer_class.return_value = mock_instance
 
             # This will fail because no API key, but we can check the call
-            result = runner.invoke(
-                main, ["HEAD", "--repo", repo_path, "--model", "custom-model"]
-            )
+            runner.invoke(main, ["analyze", "HEAD", "--repo", repo_path, "--model", "custom-model"])
 
             # Verify LLMAnalyzer was instantiated with the model
             mock_analyzer_class.assert_called_once_with(model="custom-model")
@@ -212,8 +205,8 @@ class TestCLIWithMockedAnalyzer:
         repo_path, repo, commit_hash = temp_git_repo
         runner = CliRunner()
 
-        # Don't specify commit hash
-        result = runner.invoke(main, ["--repo", repo_path, "--json"])
+        # Don't specify commit hash - use default HEAD
+        result = runner.invoke(main, ["analyze", "--repo", repo_path, "--json"])
 
         assert result.exit_code == 0
         # Should analyze HEAD commit
@@ -252,7 +245,7 @@ class TestCLIEdgeCases:
             mock_parser_class.return_value = mock_parser
 
             runner = CliRunner()
-            result = runner.invoke(main, ["HEAD", "--repo", str(tmp_path)])
+            result = runner.invoke(main, ["analyze", "HEAD", "--repo", str(tmp_path)])
 
             assert result.exit_code == 0
             assert "No changes found" in result.output
@@ -263,7 +256,7 @@ class TestCLIEdgeCases:
 
         # This will fail if current directory is not a git repo
         # We're testing the error message contains the right info
-        result = runner.invoke(main, ["HEAD"])
+        result = runner.invoke(main, ["analyze", "HEAD"])
 
         # Either succeeds (if run in a git repo) or fails with repo error
         if result.exit_code != 0:
@@ -274,9 +267,7 @@ class TestCLIEdgeCases:
         runner = CliRunner()
 
         # Trigger an error with verbose mode
-        result = runner.invoke(
-            main, ["HEAD", "--repo", "/nonexistent", "--verbose"]
-        )
+        result = runner.invoke(main, ["analyze", "HEAD", "--repo", "/nonexistent", "--verbose"])
 
         assert result.exit_code == 1
         # Should show more detailed error info in verbose mode
@@ -296,7 +287,7 @@ class TestCLIIntegration:
             mock_analyzer_class.return_value = mock_instance
 
             runner = CliRunner()
-            result = runner.invoke(main, ["HEAD", "--repo", repo_path])
+            result = runner.invoke(main, ["analyze", "HEAD", "--repo", repo_path])
 
             assert result.exit_code == 0
             # Analyzer should have been called
@@ -314,6 +305,6 @@ class TestCLIIntegration:
             runner = CliRunner()
             # Use short hash (first 7 chars)
             short_hash = commit_hash[:7]
-            result = runner.invoke(main, [short_hash, "--repo", repo_path])
+            result = runner.invoke(main, ["analyze", short_hash, "--repo", repo_path])
 
             assert result.exit_code == 0

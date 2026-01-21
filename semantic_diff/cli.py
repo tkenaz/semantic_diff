@@ -1,21 +1,21 @@
 """
 CLI interface for semantic-diff
 """
-import click
-from pathlib import Path
-import sys
 import os
 import stat
+import sys
+from pathlib import Path
 
-from semantic_diff.parsers.git_parser import GitParser
+import click
+
 from semantic_diff.analyzers.llm_analyzer import LLMAnalyzer
 from semantic_diff.formatters.console_formatter import ConsoleFormatter
 from semantic_diff.formatters.markdown_formatter import MarkdownFormatter
-
+from semantic_diff.parsers.git_parser import GitParser
 
 REPORTS_DIR_NAME = "semantic_diff_reports"
 
-PRE_PUSH_HOOK = '''#!/bin/bash
+PRE_PUSH_HOOK = """#!/bin/bash
 # semantic-diff pre-push hook
 # Analyzes commits before pushing to remote
 
@@ -37,7 +37,7 @@ while read local_ref local_sha remote_ref remote_sha; do
 done
 
 exit 0
-'''
+"""
 
 
 @click.group()
@@ -60,14 +60,16 @@ def main():
     pass
 
 
-@main.command(name='analyze')
-@click.argument('commit_hash', default='HEAD')
-@click.option('--repo', '-r', default='.', help='Path to git repository')
-@click.option('--model', '-m', default=None, help='Model to use')
-@click.option('--json', 'output_json', is_flag=True, help='Output as JSON')
-@click.option('--save', '-s', is_flag=True, help='Save report to semantic_diff_reports/')
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def analyze_cmd(commit_hash: str, repo: str, model: str, output_json: bool, save: bool, verbose: bool):
+@main.command(name="analyze")
+@click.argument("commit_hash", default="HEAD")
+@click.option("--repo", "-r", default=".", help="Path to git repository")
+@click.option("--model", "-m", default=None, help="Model to use")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.option("--save", "-s", is_flag=True, help="Save report to semantic_diff_reports/")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+def analyze_cmd(
+    commit_hash: str, repo: str, model: str, output_json: bool, save: bool, verbose: bool
+):
     """Analyze a git commit semantically."""
     _do_analyze(commit_hash, repo, model, output_json, save, verbose)
 
@@ -80,13 +82,15 @@ def default_command(ctx, *args, **kwargs):
     pass
 
 
-def _do_analyze(commit_hash: str, repo: str, model: str, output_json: bool, save: bool, verbose: bool):
+def _do_analyze(
+    commit_hash: str, repo: str, model: str, output_json: bool, save: bool, verbose: bool
+):
     """Core analysis logic."""
     try:
         if verbose:
             click.echo(f"Initializing parser for {repo}...")
 
-        parser = GitParser(repo if repo != '.' else None)
+        parser = GitParser(repo if repo != "." else None)
 
         if verbose:
             click.echo(f"Getting commit info for {commit_hash}...")
@@ -111,6 +115,7 @@ def _do_analyze(commit_hash: str, repo: str, model: str, output_json: bool, save
 
         if output_json:
             import json
+
             data = analysis.model_dump()
             click.echo(json.dumps(data, indent=2, default=str))
         else:
@@ -131,14 +136,15 @@ def _do_analyze(commit_hash: str, repo: str, model: str, output_json: bool, save
     except Exception as e:
         if verbose:
             import traceback
+
             click.echo(traceback.format_exc(), err=True)
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
 @main.command()
-@click.option('--repo', '-r', default='.', help='Path to git repository')
-@click.option('--force', '-f', is_flag=True, help='Overwrite existing hook')
+@click.option("--repo", "-r", default=".", help="Path to git repository")
+@click.option("--force", "-f", is_flag=True, help="Overwrite existing hook")
 def init(repo: str, force: bool):
     """
     Install pre-push hook for automatic analysis.
@@ -147,16 +153,16 @@ def init(repo: str, force: bool):
     Reports are saved to semantic_diff_reports/ in your project.
     """
     try:
-        from git import Repo, InvalidGitRepositoryError
+        from git import InvalidGitRepositoryError, Repo
 
         try:
-            git_repo = Repo(repo if repo != '.' else os.getcwd())
+            git_repo = Repo(repo if repo != "." else os.getcwd())
         except InvalidGitRepositoryError:
             click.echo("Error: Not a git repository", err=True)
             sys.exit(1)
 
-        hooks_dir = Path(git_repo.git_dir) / 'hooks'
-        hook_path = hooks_dir / 'pre-push'
+        hooks_dir = Path(git_repo.git_dir) / "hooks"
+        hook_path = hooks_dir / "pre-push"
 
         if hook_path.exists() and not force:
             click.echo(f"Hook already exists: {hook_path}")
@@ -177,26 +183,26 @@ def init(repo: str, force: bool):
 
 
 @main.command()
-@click.option('--repo', '-r', default='.', help='Path to git repository')
+@click.option("--repo", "-r", default=".", help="Path to git repository")
 def uninstall(repo: str):
     """Remove the pre-push hook."""
     try:
-        from git import Repo, InvalidGitRepositoryError
+        from git import InvalidGitRepositoryError, Repo
 
         try:
-            git_repo = Repo(repo if repo != '.' else os.getcwd())
+            git_repo = Repo(repo if repo != "." else os.getcwd())
         except InvalidGitRepositoryError:
             click.echo("Error: Not a git repository", err=True)
             sys.exit(1)
 
-        hook_path = Path(git_repo.git_dir) / 'hooks' / 'pre-push'
+        hook_path = Path(git_repo.git_dir) / "hooks" / "pre-push"
 
         if not hook_path.exists():
             click.echo("No pre-push hook installed")
             sys.exit(0)
 
         content = hook_path.read_text()
-        if 'semantic-diff' not in content:
+        if "semantic-diff" not in content:
             click.echo("Existing hook is not from semantic-diff, not removing")
             sys.exit(1)
 
@@ -214,20 +220,20 @@ def cli():
     args = sys.argv[1:]
 
     # If no args or first arg looks like a commit (not a known command)
-    known_commands = ['init', 'uninstall', 'analyze', '--help', '-h']
+    known_commands = ["init", "uninstall", "analyze", "--help", "-h"]
 
     if not args:
         # No args: analyze HEAD
-        sys.argv = ['semantic-diff', 'analyze', 'HEAD']
-    elif args[0] not in known_commands and not args[0].startswith('-'):
+        sys.argv = ["semantic-diff", "analyze", "HEAD"]
+    elif args[0] not in known_commands and not args[0].startswith("-"):
         # First arg is not a command, treat as commit hash
-        sys.argv = ['semantic-diff', 'analyze'] + args
-    elif args[0].startswith('-') and args[0] not in ['--help', '-h']:
+        sys.argv = ["semantic-diff", "analyze"] + args
+    elif args[0].startswith("-") and args[0] not in ["--help", "-h"]:
         # Flags without command: analyze HEAD with flags
-        sys.argv = ['semantic-diff', 'analyze', 'HEAD'] + args
+        sys.argv = ["semantic-diff", "analyze", "HEAD"] + args
 
     main()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     cli()

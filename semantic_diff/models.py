@@ -1,9 +1,10 @@
 """
 Data models for semantic diff analysis
 """
-from pydantic import BaseModel, Field
-from typing import List, Optional
 from enum import Enum
+from typing import List, Optional
+
+from pydantic import BaseModel, Field
 
 
 class RiskLevel(str, Enum):
@@ -15,6 +16,7 @@ class RiskLevel(str, Enum):
 
 class FileChange(BaseModel):
     """Represents a single file change in a commit"""
+
     path: str
     change_type: str  # added, modified, deleted, renamed
     additions: int = 0
@@ -25,6 +27,7 @@ class FileChange(BaseModel):
 
 class Intent(BaseModel):
     """What the developer was trying to accomplish"""
+
     summary: str = Field(description="One-line summary of the intent")
     reasoning: str = Field(description="Detailed reasoning behind this assessment")
     confidence: float = Field(ge=0, le=1, description="Confidence in this assessment")
@@ -32,6 +35,7 @@ class Intent(BaseModel):
 
 class Impact(BaseModel):
     """A single impact point"""
+
     area: str = Field(description="What area is affected")
     description: str = Field(description="How it's affected")
     severity: RiskLevel = Field(description="How significant is this impact")
@@ -39,6 +43,7 @@ class Impact(BaseModel):
 
 class ImpactMap(BaseModel):
     """Map of all areas impacted by the change"""
+
     direct_impacts: List[Impact] = Field(default_factory=list)
     indirect_impacts: List[Impact] = Field(default_factory=list)
     affected_components: List[str] = Field(default_factory=list)
@@ -46,6 +51,7 @@ class ImpactMap(BaseModel):
 
 class Risk(BaseModel):
     """A single identified risk"""
+
     description: str
     severity: RiskLevel
     mitigation: Optional[str] = None
@@ -54,6 +60,7 @@ class Risk(BaseModel):
 
 class RiskAssessment(BaseModel):
     """Overall risk assessment"""
+
     overall_risk: RiskLevel
     risks: List[Risk] = Field(default_factory=list)
     breaking_changes: bool = False
@@ -62,6 +69,7 @@ class RiskAssessment(BaseModel):
 
 class ReviewQuestion(BaseModel):
     """A question for the code author"""
+
     question: str
     context: str
     priority: RiskLevel = RiskLevel.MEDIUM
@@ -69,17 +77,18 @@ class ReviewQuestion(BaseModel):
 
 class SemanticAnalysis(BaseModel):
     """Complete semantic analysis of a commit"""
+
     commit_hash: str
     commit_message: str
     author: str
     date: str
     files_changed: List[FileChange]
-    
+
     intent: Intent
     impact_map: ImpactMap
     risk_assessment: RiskAssessment
     review_questions: List[ReviewQuestion]
-    
+
     # Metadata
     analysis_model: str
     analysis_timestamp: str

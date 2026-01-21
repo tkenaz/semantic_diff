@@ -1,18 +1,11 @@
 """
 Tests for formatters - console and markdown output
 """
-import re
-from pathlib import Path
-import pytest
 
 from semantic_diff.formatters.console_formatter import ConsoleFormatter
 from semantic_diff.formatters.markdown_formatter import MarkdownFormatter
 from semantic_diff.models import (
-    SemanticAnalysis,
     FileChange,
-    Intent,
-    ImpactMap,
-    RiskAssessment,
     RiskLevel,
 )
 

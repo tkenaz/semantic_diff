@@ -1,22 +1,21 @@
 """
 Shared pytest fixtures for semantic_diff tests
 """
-import tempfile
-from pathlib import Path
 from datetime import datetime
+
 import pytest
-from git import Repo, Actor
+from git import Actor, Repo
 
 from semantic_diff.models import (
-    SemanticAnalysis,
     FileChange,
-    Intent,
-    ImpactMap,
     Impact,
-    RiskAssessment,
-    Risk,
+    ImpactMap,
+    Intent,
     ReviewQuestion,
+    Risk,
+    RiskAssessment,
     RiskLevel,
+    SemanticAnalysis,
 )
 
 
@@ -42,7 +41,7 @@ def temp_git_repo(tmp_path):
     repo.index.add([str(test_file)])
 
     author = Actor("Test User", "test@example.com")
-    initial_commit = repo.index.commit("Initial commit", author=author)
+    repo.index.commit("Initial commit", author=author)
 
     # Create a second commit with changes
     test_file.write_text("def hello(name='World'):\n    print(f'Hello, {name}!')\n")

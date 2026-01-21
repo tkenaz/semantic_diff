@@ -3,10 +3,10 @@ Markdown formatter for semantic diff output - saves to files
 """
 import html
 import re
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
-from semantic_diff.models import SemanticAnalysis, RiskLevel
+from semantic_diff.models import RiskLevel, SemanticAnalysis
 
 
 class MarkdownFormatter:
@@ -30,14 +30,14 @@ class MarkdownFormatter:
         text = html.escape(text, quote=True)
         # Escape markdown special chars that could be used for injection
         # but preserve basic formatting in LLM output
-        text = re.sub(r'([<>])', r'\\\1', text)
+        text = re.sub(r"([<>])", r"\\\1", text)
         return text
 
     def _escape_inline_code(self, text: str) -> str:
         """Escape backticks in inline code content"""
         if not text:
             return ""
-        return text.replace('`', '\\`')
+        return text.replace("`", "\\`")
 
     def format(self, analysis: SemanticAnalysis) -> str:
         """Generate markdown string from analysis"""
@@ -64,7 +64,9 @@ class MarkdownFormatter:
             path = f.path[:50] + "..." if len(f.path) > 50 else f.path
             # Escape file path - could contain injection attempts
             escaped_path = self._escape_inline_code(path)
-            lines.append(f"| `{escaped_path}` | {f.change_type} | {f.additions} | {f.deletions} | {f.language or '-'} |")
+            lines.append(
+                f"| `{escaped_path}` | {f.change_type} | {f.additions} | {f.deletions} | {f.language or '-'} |"
+            )
         lines.append("")
 
         # Intent
@@ -97,7 +99,9 @@ class MarkdownFormatter:
             lines.append("")
 
         if analysis.impact_map.affected_components:
-            lines.append(f"**Affected Components:** {', '.join(analysis.impact_map.affected_components)}")
+            lines.append(
+                f"**Affected Components:** {', '.join(analysis.impact_map.affected_components)}"
+            )
             lines.append("")
 
         # Risk Assessment
@@ -139,7 +143,9 @@ class MarkdownFormatter:
 
         # Footer
         lines.append("---")
-        lines.append(f"*Analysis by {analysis.analysis_model} | {analysis.tokens_used:,} tokens | {analysis.analysis_timestamp}*")
+        lines.append(
+            f"*Analysis by {analysis.analysis_model} | {analysis.tokens_used:,} tokens | {analysis.analysis_timestamp}*"
+        )
 
         return "\n".join(lines)
 
