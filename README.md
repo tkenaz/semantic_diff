@@ -1,103 +1,184 @@
 # semantic-diff
 
+[![PyPI version](https://badge.fury.io/py/semantic-diff.svg)](https://pypi.org/project/semantic-diff/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 AI-powered semantic analysis of git commits. Goes beyond `git diff` to show **intent**, **impact**, **risk**, and **review questions**.
 
 ## What it does
 
 Regular `git diff` shows *what* changed. `semantic-diff` shows:
 
-- **Intent** — What was the developer trying to accomplish? (not what changed, but *why*)
-- **Impact Map** — What parts of the system are affected directly and indirectly?
-- **Risk Assessment** — What could break? Edge cases? Breaking changes?
-- **Review Questions** — What should a reviewer ask the author?
+| | git diff | semantic-diff |
+|---|---|---|
+| **What** | Lines added/removed | Same |
+| **Why** | - | Intent behind the change |
+| **Risk** | - | What could break, edge cases |
+| **Impact** | - | Direct and indirect effects |
+| **Review** | - | Questions to ask the author |
 
 ## Installation
 
 ```bash
-# Clone the repo
-git clone git@github.com:tkenaz/semantic_diff.git
-cd semantic_diff
-
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-
-# Install
-pip install -e .
+pip install semantic-diff
 ```
 
-## Configuration
-
-Create a `.env` file:
+## Quick Start
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-...
-SEMANTIC_DIFF_MODEL=claude-sonnet-4-5-20250929  # or claude-opus-4-5-20251101
-SEMANTIC_DIFF_MAX_RETRIES=3  # optional, API retry attempts
-SEMANTIC_DIFF_MAX_WAIT=30.0  # optional, max total retry wait time in seconds
+# Set your API key
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Analyze a commit
+semantic-diff HEAD
+
+# Enable automatic analysis before every push
+semantic-diff init
 ```
 
-## Usage
+That's it! Now every `git push` will automatically analyze your commits and save reports.
+
+## How It Works
+
+### Manual Analysis
 
 ```bash
-# Analyze HEAD commit in current repo
+# Analyze HEAD commit
 semantic-diff
 
 # Analyze specific commit
 semantic-diff abc123
 
-# Analyze commit in another repo
-semantic-diff HEAD --repo /path/to/repo
+# Save report to file
+semantic-diff HEAD --save
 
-# Output as JSON (for piping to other tools)
+# Output as JSON
 semantic-diff HEAD --json
+```
 
-# Verbose mode
-semantic-diff HEAD -v
+### Automatic Analysis (Pre-Push Hook)
+
+```bash
+# Install the hook (once per project)
+semantic-diff init
+
+# Now every push triggers analysis automatically
+git push  # → runs semantic-diff, saves report, then pushes
+```
+
+### Reports
+
+Reports are saved to `semantic_diff_reports/` in your project root:
+
+```
+my-project/
+├── semantic_diff_reports/
+│   ├── abc12345_20240115_143022.md
+│   ├── def67890_20240115_152341.md
+│   └── ...
+├── src/
+└── ...
+```
+
+Each report includes:
+- Commit metadata
+- Intent analysis with confidence score
+- Impact map (direct and indirect effects)
+- Risk assessment with mitigations
+- Review questions prioritized by importance
+
+### GitHub Action
+
+Add to your workflow to analyze PRs automatically:
+
+```yaml
+# .github/workflows/semantic-diff.yml
+name: Semantic Diff
+
+on: [pull_request]
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: tkenaz/semantic_diff@v0.2.0
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          comment_on_pr: true
+          fail_on_risk: high  # optional: block merge on high risk
 ```
 
 ## Example Output
 
 ```
-╭──────────────────── Semantic Diff Analysis ───────────────────────╮
-│ Fix authentication bypass in login endpoint                       │
-│                                                                   │
-│ abc12345 by developer@example.com                                 │
-│ 2024-12-22T10:30:00                                               │
-╰───────────────────────────────────────────────────────────────────╯
+╭──────────────────── Semantic Diff Analysis ────────────────────╮
+│ Fix authentication bypass in login endpoint                    │
+│                                                                 │
+│ abc12345 by developer@example.com                               │
+╰─────────────────────────────────────────────────────────────────╯
 
-╭──────────────────────── Intent ────────────────────────────╮
-│ Prevent unauthorized access by validating session tokens   │
-│ before processing login requests.                          │
-│                                                            │
-│ Confidence: [████████░░] 85%                               │
-╰────────────────────────────────────────────────────────────╯
+╭────────────────────────── Intent ───────────────────────────────╮
+│ Prevent unauthorized access by validating session tokens        │
+│ before processing login requests.                               │
+│                                                                 │
+│ Confidence: [████████░░] 85%                                    │
+╰─────────────────────────────────────────────────────────────────╯
 
-╭──────────────────── Risk Assessment ───────────────────────╮
-│ Overall Risk: ⚡ HIGH                                       │
-│                                                            │
-│ BREAKING CHANGES DETECTED                                  │
-│                                                            │
-│ Identified Risks:                                          │
-│   ⚡ [high] Existing sessions may be invalidated            │
-│      Mitigation: Add migration for active sessions         │
-╰────────────────────────────────────────────────────────────╯
+╭───────────────────── Risk Assessment ───────────────────────────╮
+│ Overall Risk: ⚡ HIGH                                            │
+│                                                                 │
+│ ⚠️  BREAKING CHANGES DETECTED                                    │
+│                                                                 │
+│ Identified Risks:                                               │
+│   ⚡ [high] Existing sessions may be invalidated                 │
+│      💡 Mitigation: Add migration for active sessions            │
+╰─────────────────────────────────────────────────────────────────╯
+
+╭───────────────────── Review Questions ──────────────────────────╮
+│ 1. How will existing logged-in users be affected?               │
+│    🔥 Sessions created before this change may become invalid    │
+│                                                                 │
+│ 2. Is there a migration path for active sessions?               │
+│    ⚡ Users may be logged out unexpectedly                       │
+╰─────────────────────────────────────────────────────────────────╯
 ```
+
+## Configuration
+
+Create a `.env` file in your project or set environment variables:
+
+```bash
+# Required
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Optional
+SEMANTIC_DIFF_MODEL=claude-sonnet-4-5-20250929  # or claude-opus-4-5-20251101
+```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `semantic-diff` | Analyze HEAD commit |
+| `semantic-diff <hash>` | Analyze specific commit |
+| `semantic-diff --save` | Save report to `semantic_diff_reports/` |
+| `semantic-diff --json` | Output as JSON |
+| `semantic-diff init` | Install pre-push hook |
+| `semantic-diff uninstall` | Remove pre-push hook |
 
 ## Development
 
 ```bash
-# Install dev dependencies
+git clone https://github.com/tkenaz/semantic_diff.git
+cd semantic_diff
 pip install -e ".[dev]"
-
-# Run tests
 pytest
-
-# Format code
-black semantic_diff
-ruff check semantic_diff
 ```
 
 ## License
 
-MIT — Kenaz GmbH
+MIT — [Kenaz GmbH](https://kenaz.ai)
