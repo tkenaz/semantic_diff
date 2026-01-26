@@ -1,48 +1,51 @@
 # Semantic Diff — Open Source Roadmap
 
-## Phase 1: Release Ready (MVP Hardening)
+## Phase 1: Release Ready (MVP Hardening) ✅ DONE
 
 ### Testing
-- [ ] Unit tests for `git_parser.py`
-- [ ] Unit tests for `llm_analyzer.py`
-- [ ] Unit tests for formatters (console, markdown)
-- [ ] Integration tests (end-to-end with real commits)
-- [ ] Test coverage target: 80%+
+- [x] Unit tests for `git_parser.py` (38 tests)
+- [x] Unit tests for `llm_analyzer.py` (31 tests)
+- [x] Unit tests for formatters (19 tests)
+- [x] Unit tests for CLI (18 tests)
+- [x] Unit tests for models (8 tests)
+- [x] **114 tests total, all passing**
 
 ### CI/CD
-- [ ] GitHub Actions workflow for tests
-- [ ] GitHub Actions workflow for linting (ruff, black)
+- [x] GitHub Actions workflow for tests
+- [x] GitHub Actions workflow for linting (ruff, black)
 - [ ] Dependabot for dependency updates
-- [ ] Release automation (tag → PyPI publish)
+- [x] Release automation (tag → PyPI publish via twine)
 
 ### Documentation
-- [ ] Improve README with GIFs/screenshots
-- [ ] Add CONTRIBUTING.md
-- [ ] Add LICENSE (MIT)
+- [x] README with badges, comparison table, examples
+- [x] Add CONTRIBUTING.md
+- [x] Add LICENSE (MIT)
 - [ ] Add CHANGELOG.md
 - [ ] Example outputs in /examples folder
 
 ### Code Quality
-- [ ] Add type hints everywhere
+- [x] Type hints (Pydantic models)
 - [ ] Docstrings for public methods
-- [ ] Error handling improvements (graceful failures)
-- [ ] Retry logic for API calls (already partially done)
+- [x] Error handling improvements
+- [x] Retry logic for API calls
+- [x] XSS protection in markdown output
 
 ---
 
-## Phase 2: GitHub Action (Killer Feature)
+## Phase 2: GitHub Action (Killer Feature) ✅ DONE
 
 ### Core Action
-- [ ] Create `action.yml` for GitHub Marketplace
-- [ ] Action inputs: `fail-on-risk`, `comment-on-pr`, `model`
-- [ ] PR comment with analysis summary
-- [ ] Status check (pass/fail based on risk level)
-- [ ] Support for `pull_request` and `push` events
+- [x] Create `action.yml` for GitHub Marketplace
+- [x] Action inputs: `fail_on_risk`, `comment_on_pr`, `model`
+- [x] PR comment with analysis summary
+- [x] Status check (pass/fail based on risk level)
+- [x] Support for `pull_request` events
 
 ### Integration
-- [ ] Example workflow in README
-- [ ] Test on real repositories
+- [x] Example workflow in README
+- [x] Self-analysis (dogfooding) in CI
 - [ ] Marketplace listing
+- [ ] Test on external repositories
 
 ---
 
@@ -122,22 +125,21 @@
 - [x] Console formatter (Rich)
 - [x] Markdown formatter + `--save` flag
 - [x] JSON output
-- [x] Basic error handling
-- [x] API retry logic
+- [x] `semantic-diff init` — pre-push hook
+- [x] `semantic-diff uninstall` — remove hook
+- [x] **PyPI v0.2.0 published**
+- [x] **GitHub repo public**
+- [x] 114 tests passing
+- [x] CI/CD with self-analysis
 
 ---
 
-## Meta
+## Next Priority
 
-**Every commit to this repo gets analyzed by semantic-diff itself.**
-
-```bash
-# After committing
-semantic-diff HEAD --save
-git add semantic_diff_reports/
-git commit --amend --no-edit
-```
+1. **Launch post** (HN, Reddit) — get first users
+2. **Multi-LLM support** — OpenAI, Ollama
+3. **Branch diff** — `semantic-diff main..feature`
 
 ---
 
-*Last updated: 2026-01-18*
+*Last updated: 2026-01-21*

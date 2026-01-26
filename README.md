@@ -114,38 +114,17 @@ jobs:
 
 ## Example Output
 
-```
-╭──────────────────── Semantic Diff Analysis ────────────────────╮
-│ Fix authentication bypass in login endpoint                    │
-│                                                                 │
-│ abc12345 by developer@example.com                               │
-╰─────────────────────────────────────────────────────────────────╯
+### Analysis Overview
 
-╭────────────────────────── Intent ───────────────────────────────╮
-│ Prevent unauthorized access by validating session tokens        │
-│ before processing login requests.                               │
-│                                                                 │
-│ Confidence: [████████░░] 85%                                    │
-╰─────────────────────────────────────────────────────────────────╯
+![Example Output](assets/example-output.png)
 
-╭───────────────────── Risk Assessment ───────────────────────────╮
-│ Overall Risk: ⚡ HIGH                                            │
-│                                                                 │
-│ ⚠️  BREAKING CHANGES DETECTED                                    │
-│                                                                 │
-│ Identified Risks:                                               │
-│   ⚡ [high] Existing sessions may be invalidated                 │
-│      💡 Mitigation: Add migration for active sessions            │
-╰─────────────────────────────────────────────────────────────────╯
+*Intent analysis with 98% confidence, risk assessment, and review questions*
 
-╭───────────────────── Review Questions ──────────────────────────╮
-│ 1. How will existing logged-in users be affected?               │
-│    🔥 Sessions created before this change may become invalid    │
-│                                                                 │
-│ 2. Is there a migration path for active sessions?               │
-│    ⚡ Users may be logged out unexpectedly                       │
-╰─────────────────────────────────────────────────────────────────╯
-```
+### What It Finds
+
+![Risk Assessment](assets/risk-assessment.png)
+
+*Real example: semantic-diff analyzing itself found XSS vulnerabilities, CI issues, and security misconfigurations*
 
 ## Configuration
 
