@@ -158,6 +158,16 @@ pip install -e ".[dev]"
 pytest
 ```
 
+## Support
+
+- **Bug reports & features**: [GitHub Issues](https://github.com/tkenaz/semantic_diff/issues)
+- **Questions**: [GitHub Discussions](https://github.com/tkenaz/semantic_diff/discussions)
+- **Custom integrations or enterprise**: [hello@kenaz.ai](mailto:hello@kenaz.ai)
+
 ## License
 
 MIT — [Kenaz GmbH](https://kenaz.ai)
+
+---
+
+*Built with 🖤 by [Kenaz GmbH](https://kenaz.ai) — AI tools for developers*
