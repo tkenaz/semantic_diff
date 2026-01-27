@@ -67,12 +67,19 @@ def main():
 @click.option("--model", "-m", default=None, help="Model to use")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 @click.option("--save", "-s", is_flag=True, help="Save report to semantic_diff_reports/")
+@click.option("--brief", "-b", is_flag=True, help="Brief output (intent + risk + top questions)")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def analyze_cmd(
-    commit_hash: str, repo: str, model: str, output_json: bool, save: bool, verbose: bool
+    commit_hash: str,
+    repo: str,
+    model: str,
+    output_json: bool,
+    save: bool,
+    brief: bool,
+    verbose: bool,
 ):
     """Analyze a git commit semantically."""
-    _do_analyze(commit_hash, repo, model, output_json, save, verbose)
+    _do_analyze(commit_hash, repo, model, output_json, save, brief, verbose)
 
 
 # Also register as default command (when called without subcommand)
@@ -84,7 +91,13 @@ def default_command(ctx, *args, **kwargs):
 
 
 def _do_analyze(
-    commit_hash: str, repo: str, model: str, output_json: bool, save: bool, verbose: bool
+    commit_hash: str,
+    repo: str,
+    model: str,
+    output_json: bool,
+    save: bool,
+    brief: bool,
+    verbose: bool,
 ):
     """Core analysis logic."""
     try:
@@ -120,7 +133,7 @@ def _do_analyze(
             data = analysis.model_dump()
             click.echo(json.dumps(data, indent=2, default=str))
         else:
-            formatter = ConsoleFormatter()
+            formatter = ConsoleFormatter(brief=brief)
             formatter.format(analysis)
 
         if save:

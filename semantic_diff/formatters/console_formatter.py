@@ -28,8 +28,9 @@ class ConsoleFormatter:
         RiskLevel.CRITICAL: "🔥",
     }
 
-    def __init__(self):
+    def __init__(self, brief: bool = False):
         self.console = Console()
+        self.brief = brief
 
     def _risk_style(self, level: RiskLevel) -> str:
         return self.RISK_COLORS.get(level, "white")
@@ -39,6 +40,69 @@ class ConsoleFormatter:
 
     def format(self, analysis: SemanticAnalysis) -> None:
         """Print formatted analysis to console"""
+
+        if self.brief:
+            self._format_brief(analysis)
+        else:
+            self._format_full(analysis)
+
+    def _format_brief(self, analysis: SemanticAnalysis) -> None:
+        """Print compact analysis output"""
+
+        # Header - compact
+        self.console.print()
+        risk = analysis.risk_assessment
+        risk_icon = self._risk_icon(risk.overall_risk)
+        risk_color = self._risk_style(risk.overall_risk)
+
+        self.console.print(
+            Panel(
+                f"[bold]{analysis.commit_message}[/bold]\n"
+                f"[dim]{analysis.commit_hash[:8]} • {len(analysis.files_changed)} files[/dim]",
+                title="📋 Semantic Diff",
+                border_style="blue",
+            )
+        )
+
+        # Intent - summary only
+        confidence_bar = "█" * int(analysis.intent.confidence * 10) + "░" * (
+            10 - int(analysis.intent.confidence * 10)
+        )
+        self.console.print(
+            Panel(
+                f"{analysis.intent.summary}\n\n"
+                f"[dim]Confidence: [{confidence_bar}] {analysis.intent.confidence:.0%}[/dim]",
+                title="🎯 Intent",
+                border_style="green",
+            )
+        )
+
+        # Risk - overall only
+        risk_text = Text()
+        risk_text.append(
+            f"Overall Risk: {risk_icon} {risk.overall_risk.value.upper()}",
+            style=f"bold {risk_color}",
+        )
+        if risk.breaking_changes:
+            risk_text.append("  ⚠️  BREAKING CHANGES", style="bold red")
+
+        self.console.print(Panel(risk_text, title="⚠️  Risk", border_style=risk_color))
+
+        # Top 3 questions - compact
+        if analysis.review_questions:
+            questions_text = Text()
+            for i, q in enumerate(analysis.review_questions[:3], 1):
+                icon = self._risk_icon(q.priority)
+                color = self._risk_style(q.priority)
+                questions_text.append(f"{icon} ", style=color)
+                questions_text.append(f"{q.question}\n")
+
+            self.console.print(Panel(questions_text, title="❓ Top Questions", border_style="cyan"))
+
+        self.console.print()
+
+    def _format_full(self, analysis: SemanticAnalysis) -> None:
+        """Print full analysis output"""
 
         # Header
         self.console.print()
