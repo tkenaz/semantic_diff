@@ -214,6 +214,30 @@ class TestCLIWithMockedAnalyzer:
         data = json.loads(result.output)
         assert "commit_hash" in data
 
+    def test_brief_flag_produces_compact_output(self, temp_git_repo, mock_llm_analyzer):
+        """Test that --brief flag produces compact console output"""
+        repo_path, repo, commit_hash = temp_git_repo
+        runner = CliRunner()
+
+        result_brief = runner.invoke(main, ["analyze", "HEAD", "--repo", repo_path, "--brief"])
+        result_full = runner.invoke(main, ["analyze", "HEAD", "--repo", repo_path])
+
+        assert result_brief.exit_code == 0
+        assert result_full.exit_code == 0
+
+        # Brief output should be shorter
+        assert len(result_brief.output) < len(result_full.output)
+
+    def test_brief_and_verbose_mutually_exclusive(self, temp_git_repo):
+        """Test that --brief and --verbose cannot be used together"""
+        repo_path, repo, commit_hash = temp_git_repo
+        runner = CliRunner()
+
+        result = runner.invoke(main, ["analyze", "HEAD", "--repo", repo_path, "--brief", "--verbose"])
+
+        assert result.exit_code == 1
+        assert "mutually exclusive" in result.output
+
 
 class TestCLIEdgeCases:
     """Test edge cases and error handling"""

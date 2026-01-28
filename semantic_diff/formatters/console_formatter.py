@@ -88,14 +88,34 @@ class ConsoleFormatter:
 
         self.console.print(Panel(risk_text, title="⚠️  Risk", border_style=risk_color))
 
-        # Top 3 questions - compact
+        # Top questions - show all CRITICAL/HIGH, then fill up to 3 with others
         if analysis.review_questions:
+            # Always show CRITICAL and HIGH priority questions
+            critical_high = [
+                q for q in analysis.review_questions
+                if q.priority in (RiskLevel.CRITICAL, RiskLevel.HIGH)
+            ]
+            others = [
+                q for q in analysis.review_questions
+                if q.priority not in (RiskLevel.CRITICAL, RiskLevel.HIGH)
+            ]
+
+            # Show all critical/high, then fill remaining slots up to 3 minimum
+            questions_to_show = critical_high.copy()
+            remaining_slots = max(0, 3 - len(critical_high))
+            questions_to_show.extend(others[:remaining_slots])
+
             questions_text = Text()
-            for i, q in enumerate(analysis.review_questions[:3], 1):
+            for q in questions_to_show:
                 icon = self._risk_icon(q.priority)
                 color = self._risk_style(q.priority)
                 questions_text.append(f"{icon} ", style=color)
                 questions_text.append(f"{q.question}\n")
+
+            # Show count if there are more hidden
+            hidden_count = len(analysis.review_questions) - len(questions_to_show)
+            if hidden_count > 0:
+                questions_text.append(f"[dim]... and {hidden_count} more (use full mode to see all)[/dim]")
 
             self.console.print(Panel(questions_text, title="❓ Top Questions", border_style="cyan"))
 

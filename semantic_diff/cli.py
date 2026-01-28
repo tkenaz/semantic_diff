@@ -100,6 +100,11 @@ def _do_analyze(
     verbose: bool,
 ):
     """Core analysis logic."""
+    # Mutual exclusion: --brief and --verbose don't make sense together
+    if brief and verbose:
+        click.echo("Error: --brief and --verbose are mutually exclusive", err=True)
+        sys.exit(1)
+
     try:
         if verbose:
             click.echo(f"Initializing parser for {repo}...")

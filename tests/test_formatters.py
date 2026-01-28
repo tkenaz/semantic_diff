@@ -307,3 +307,146 @@ class TestConsoleFormatter:
         captured = capsys.readouterr()
         # Should show confidence percentage
         assert "75%" in captured.out or "0.75" in captured.out
+
+
+class TestConsoleFormatterBriefMode:
+    """Test ConsoleFormatter brief mode output"""
+
+    def test_brief_mode_initialization(self):
+        """Test that brief mode can be initialized"""
+        formatter = ConsoleFormatter(brief=True)
+        assert formatter.brief is True
+
+        formatter_full = ConsoleFormatter(brief=False)
+        assert formatter_full.brief is False
+
+        formatter_default = ConsoleFormatter()
+        assert formatter_default.brief is False
+
+    def test_brief_mode_produces_shorter_output(self, mock_semantic_analysis, capsys):
+        """Test that brief mode produces less output than full mode"""
+        formatter_brief = ConsoleFormatter(brief=True)
+        formatter_full = ConsoleFormatter(brief=False)
+
+        formatter_brief.format(mock_semantic_analysis)
+        brief_output = capsys.readouterr().out
+
+        formatter_full.format(mock_semantic_analysis)
+        full_output = capsys.readouterr().out
+
+        # Brief should be significantly shorter
+        assert len(brief_output) < len(full_output)
+
+    def test_brief_mode_includes_essential_info(self, mock_semantic_analysis, capsys):
+        """Test that brief mode includes essential information"""
+        formatter = ConsoleFormatter(brief=True)
+        formatter.format(mock_semantic_analysis)
+
+        output = capsys.readouterr().out
+
+        # Should include commit info
+        assert mock_semantic_analysis.commit_hash[:8] in output
+        assert mock_semantic_analysis.commit_message in output
+
+        # Should include intent summary
+        assert mock_semantic_analysis.intent.summary in output
+
+        # Should include risk level
+        assert "HIGH" in output or "Risk" in output
+
+    def test_brief_mode_excludes_details(self, mock_semantic_analysis, capsys):
+        """Test that brief mode excludes detailed reasoning"""
+        formatter = ConsoleFormatter(brief=True)
+        formatter.format(mock_semantic_analysis)
+
+        output = capsys.readouterr().out
+
+        # Should NOT include detailed reasoning
+        assert mock_semantic_analysis.intent.reasoning not in output
+
+        # Should NOT include "Files Changed" section header
+        assert "Files Changed" not in output
+
+        # Should NOT include impact map section
+        assert "Impact Map" not in output
+
+    def test_brief_mode_limits_questions(self, mock_semantic_analysis, capsys):
+        """Test that brief mode limits questions but shows critical/high"""
+        from semantic_diff.models import ReviewQuestion
+
+        # Create analysis with many questions of different priorities
+        analysis = mock_semantic_analysis.model_copy()
+        analysis.review_questions = [
+            ReviewQuestion(
+                question="Low priority question 1?",
+                context="context",
+                priority=RiskLevel.LOW,
+            ),
+            ReviewQuestion(
+                question="Critical question must show?",
+                context="context",
+                priority=RiskLevel.CRITICAL,
+            ),
+            ReviewQuestion(
+                question="High priority question?",
+                context="context",
+                priority=RiskLevel.HIGH,
+            ),
+            ReviewQuestion(
+                question="Medium question 1?",
+                context="context",
+                priority=RiskLevel.MEDIUM,
+            ),
+            ReviewQuestion(
+                question="Low priority question 2?",
+                context="context",
+                priority=RiskLevel.LOW,
+            ),
+        ]
+
+        formatter = ConsoleFormatter(brief=True)
+        formatter.format(analysis)
+
+        output = capsys.readouterr().out
+
+        # CRITICAL and HIGH must always be shown
+        assert "Critical question must show?" in output
+        assert "High priority question?" in output
+
+        # Should show "and X more" for hidden questions
+        assert "more" in output
+
+    def test_brief_mode_shows_all_critical_high_even_if_many(self, mock_semantic_analysis, capsys):
+        """Test that ALL critical/high questions are shown even if >3"""
+        from semantic_diff.models import ReviewQuestion
+
+        analysis = mock_semantic_analysis.model_copy()
+        analysis.review_questions = [
+            ReviewQuestion(question="Critical 1?", context="c", priority=RiskLevel.CRITICAL),
+            ReviewQuestion(question="Critical 2?", context="c", priority=RiskLevel.CRITICAL),
+            ReviewQuestion(question="High 1?", context="c", priority=RiskLevel.HIGH),
+            ReviewQuestion(question="High 2?", context="c", priority=RiskLevel.HIGH),
+            ReviewQuestion(question="Medium 1?", context="c", priority=RiskLevel.MEDIUM),
+        ]
+
+        formatter = ConsoleFormatter(brief=True)
+        formatter.format(analysis)
+
+        output = capsys.readouterr().out
+
+        # All 4 critical/high should be shown
+        assert "Critical 1?" in output
+        assert "Critical 2?" in output
+        assert "High 1?" in output
+        assert "High 2?" in output
+
+    def test_brief_mode_minimal_analysis(self, mock_minimal_analysis, capsys):
+        """Test brief mode with minimal data"""
+        formatter = ConsoleFormatter(brief=True)
+        formatter.format(mock_minimal_analysis)
+
+        output = capsys.readouterr().out
+
+        # Should not crash and should show basic info
+        assert len(output) > 0
+        assert "LOW" in output

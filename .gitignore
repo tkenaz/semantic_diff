@@ -18,4 +18,7 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+
+# Working files
 CLAUDE_NOTES.md
+PERSPECTIVES.md
