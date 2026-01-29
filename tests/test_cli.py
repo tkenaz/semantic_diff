@@ -233,7 +233,9 @@ class TestCLIWithMockedAnalyzer:
         repo_path, repo, commit_hash = temp_git_repo
         runner = CliRunner()
 
-        result = runner.invoke(main, ["analyze", "HEAD", "--repo", repo_path, "--brief", "--verbose"])
+        result = runner.invoke(
+            main, ["analyze", "HEAD", "--repo", repo_path, "--brief", "--verbose"]
+        )
 
         assert result.exit_code == 1
         assert "mutually exclusive" in result.output
