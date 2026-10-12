@@ -12,9 +12,9 @@ inputs:
     required: true
 
   model:
-    description: 'Model to use (claude-sonnet-4-5-20250929 or claude-opus-4-5-20251101)'
+    description: 'Model to use (any Anthropic model id, e.g. claude-sonnet-5-5)'
     required: false
-    default: 'claude-sonnet-4-5-20250929'
+    default: 'claude-sonnet-5-5'
 
   fail_on_risk:
     description: 'Fail the check if risk level meets or exceeds this (low, medium, high, critical, never)'
@@ -54,8 +54,14 @@ runs:
 
     - name: Install semantic-diff
       shell: bash
+      env:
+        # Install the CLI from the same repo+ref the action itself runs at,
+        # so action.yml and the CLI can never drift apart (PyPI lags: it
+        # carries 0.1.0, whose CLI lacks --save — the v0.2.0 CI breakage).
+        ACTION_REPO: ${{ github.action_repository }}
+        ACTION_REF: ${{ github.action_ref }}
       run: |
-        pip install semantic-diff
+        pip install "git+https://github.com/${ACTION_REPO:-tkenaz/semantic_diff}@${ACTION_REF:-main}"
 
     - name: Determine commits to analyze
       id: commits

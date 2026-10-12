@@ -106,7 +106,7 @@ Be specific and actionable. Avoid generic observations."""
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY not found in environment")
 
-        self.model = model or os.getenv("SEMANTIC_DIFF_MODEL", "claude-sonnet-4-5-20250929")
+        self.model = model or os.getenv("SEMANTIC_DIFF_MODEL", "claude-sonnet-5-5")
         self.client = anthropic.Anthropic(api_key=self.api_key)
         self.last_usage = None
 

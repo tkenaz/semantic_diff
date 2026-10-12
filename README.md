@@ -135,7 +135,7 @@ Create a `.env` file in your project or set environment variables:
 ANTHROPIC_API_KEY=sk-ant-...
 
 # Optional
-SEMANTIC_DIFF_MODEL=claude-sonnet-4-5-20250929  # or claude-opus-4-5-20251101
+SEMANTIC_DIFF_MODEL=claude-sonnet-5-5  # or claude-opus-5-5
 ```
 
 ## Commands
