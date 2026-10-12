@@ -2,16 +2,21 @@
 CLI interface for semantic-diff
 """
 
+import json
 import os
 import stat
 import sys
 from pathlib import Path
+from typing import Callable, List, Optional, Tuple
 
 import click
 
 from semantic_diff.analyzers.llm_analyzer import LLMAnalyzer
+from semantic_diff.change_set import from_commit, from_range
 from semantic_diff.formatters.console_formatter import ConsoleFormatter
 from semantic_diff.formatters.markdown_formatter import MarkdownFormatter
+from semantic_diff.gitlab_env import gitlab_mr_context
+from semantic_diff.models import ChangeSet, FileChange
 from semantic_diff.parsers.git_parser import GitParser
 from semantic_diff.providers import build_provider
 
@@ -50,6 +55,7 @@ def main():
     \b
     Commands:
       semantic-diff <commit>     Analyze a commit (default: HEAD)
+      semantic-diff mr           Analyze a merge request (base..head)
       semantic-diff init         Install pre-push hook
       semantic-diff uninstall    Remove pre-push hook
 
@@ -57,30 +63,92 @@ def main():
     Examples:
       semantic-diff HEAD
       semantic-diff abc123 --save
+      semantic-diff mr --base origin/dev
+      semantic-diff mr --gitlab-env --json
       semantic-diff init
     """
     pass
 
 
+def _output_options(command):
+    """Options shared by every analysis command."""
+    options = [
+        click.option("--repo", "-r", default=".", help="Path to git repository"),
+        click.option("--model", "-m", default=None, help="Model to use"),
+        click.option("--json", "output_json", is_flag=True, help="Output as JSON"),
+        click.option("--save", "-s", is_flag=True, help="Save report to semantic_diff_reports/"),
+        click.option(
+            "--brief", "-b", is_flag=True, help="Brief output (intent + risk + top questions)"
+        ),
+        click.option("--verbose", "-v", is_flag=True, help="Verbose output"),
+    ]
+    for option in reversed(options):
+        command = option(command)
+    return command
+
+
 @main.command(name="analyze")
 @click.argument("commit_hash", default="HEAD")
-@click.option("--repo", "-r", default=".", help="Path to git repository")
-@click.option("--model", "-m", default=None, help="Model to use")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-@click.option("--save", "-s", is_flag=True, help="Save report to semantic_diff_reports/")
-@click.option("--brief", "-b", is_flag=True, help="Brief output (intent + risk + top questions)")
-@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
-def analyze_cmd(
-    commit_hash: str,
-    repo: str,
-    model: str,
-    output_json: bool,
-    save: bool,
-    brief: bool,
-    verbose: bool,
-):
+@_output_options
+def analyze_cmd(commit_hash: str, **output):
     """Analyze a git commit semantically."""
-    _do_analyze(commit_hash, repo, model, output_json, save, brief, verbose)
+
+    def collect(parser: GitParser):
+        change_set = from_commit(parser.get_commit_info(commit_hash))
+        return change_set, parser.get_file_changes(commit_hash)
+
+    _run(collect, **output)
+
+
+@main.command(name="mr")
+@click.option("--base", default=None, help="Target ref the MR merges into (e.g. origin/dev)")
+@click.option("--head", default=None, help="Source ref (default: HEAD)")
+@click.option("--title", default=None, help="MR title - the strongest intent signal")
+@click.option(
+    "--description-file", type=click.File("r"), default=None, help="File with the MR description"
+)
+@click.option(
+    "--gitlab-env",
+    is_flag=True,
+    help="Read base/head/title/description from GitLab MR pipeline variables",
+)
+@_output_options
+def mr_cmd(
+    base: Optional[str],
+    head: Optional[str],
+    title: Optional[str],
+    description_file,
+    gitlab_env: bool,
+    **output,
+):
+    """Analyze a whole merge request: merge-base(base, head)..head."""
+
+    def collect(parser: GitParser):
+        context = gitlab_mr_context(os.environ) if gitlab_env else {}
+        base_ref = base or context.get("base")
+        if not base_ref:
+            raise ValueError("--base is required (or run with --gitlab-env in an MR pipeline)")
+        head_ref = head or context.get("head") or "HEAD"
+
+        try:
+            info = parser.get_range_info(base_ref, head_ref)
+        except ValueError as e:
+            if "Could not find commit" in str(e):
+                raise ValueError(
+                    f"{e}. Shallow clone? Set GIT_DEPTH: 0 for this job, "
+                    f"or fetch the commit: git fetch origin {base_ref}"
+                ) from e
+            raise
+        if not info["commits"]:
+            return None, []
+
+        description = (
+            description_file.read() if description_file else context.get("description", "")
+        )
+        change_set = from_range(info, title=title or context.get("title"), description=description)
+        return change_set, parser.get_range_changes(base_ref, head_ref)
+
+    _run(collect, **output)
 
 
 # Also register as default command (when called without subcommand)
@@ -91,16 +159,16 @@ def default_command(ctx, *args, **kwargs):
     pass
 
 
-def _do_analyze(
-    commit_hash: str,
+def _run(
+    collect: Callable[[GitParser], Tuple[Optional[ChangeSet], List[FileChange]]],
     repo: str,
-    model: str,
+    model: Optional[str],
     output_json: bool,
     save: bool,
     brief: bool,
     verbose: bool,
 ):
-    """Core analysis logic."""
+    """Shared pipeline: collect the change set, analyze it, render/save the result."""
     # Mutual exclusion: --brief and --verbose don't make sense together
     if brief and verbose:
         click.echo("Error: --brief and --verbose are mutually exclusive", err=True)
@@ -111,43 +179,31 @@ def _do_analyze(
             click.echo(f"Initializing parser for {repo}...")
 
         parser = GitParser(repo if repo != "." else None)
-
-        if verbose:
-            click.echo(f"Getting commit info for {commit_hash}...")
-
-        commit_info = parser.get_commit_info(commit_hash)
-        files = parser.get_file_changes(commit_hash)
+        change_set, files = collect(parser)
         project_context = parser.get_project_context()
 
         if verbose:
             click.echo(f"Found {len(files)} changed files")
             click.echo(f"Project languages: {project_context.get('languages', [])}")
 
-        if not files:
-            click.echo("No changes found in this commit.", err=True)
+        if change_set is None or not files:
+            click.echo("No changes found.", err=True)
             sys.exit(0)
 
         if verbose:
             click.echo("Calling LLM for analysis...")
 
         analyzer = LLMAnalyzer(build_provider(model=model))
-        analysis = analyzer.analyze(commit_info, files, project_context)
+        analysis = analyzer.analyze(change_set, files, project_context)
 
         if output_json:
-            import json
-
-            data = analysis.model_dump()
-            click.echo(json.dumps(data, indent=2, default=str))
+            click.echo(json.dumps(analysis.model_dump(), indent=2, default=str))
         else:
-            formatter = ConsoleFormatter(brief=brief)
-            formatter.format(analysis)
+            ConsoleFormatter(brief=brief).format(analysis)
 
         if save:
-            git_root = Path(parser.repo.working_dir)
-            reports_dir = git_root / REPORTS_DIR_NAME
-
-            md_formatter = MarkdownFormatter()
-            saved_path = md_formatter.save(analysis, reports_dir)
+            reports_dir = Path(parser.repo.working_dir) / REPORTS_DIR_NAME
+            saved_path = MarkdownFormatter().save(analysis, reports_dir)
             click.echo(f"\nReport saved: {saved_path}")
 
     except ValueError as e:
@@ -235,23 +291,28 @@ def uninstall(repo: str):
 
 
 # Wrapper for backwards compatibility: semantic-diff HEAD
+HELP_FLAGS = ("--help", "-h")
+
+
+def route_args(args: List[str]) -> List[str]:
+    """
+    Map console-script arguments to a command: bare commits and bare flags mean
+    `analyze`. Known commands come from the click group itself, so a newly
+    registered command is routed correctly without touching this function.
+    """
+    if not args:
+        return ["analyze", "HEAD"]
+    first = args[0]
+    if first in main.commands or first in HELP_FLAGS:
+        return args
+    if first.startswith("-"):
+        return ["analyze", "HEAD"] + args
+    return ["analyze"] + args
+
+
 def cli():
     """Entry point that handles both commands and direct commit analysis."""
-    args = sys.argv[1:]
-
-    # If no args or first arg looks like a commit (not a known command)
-    known_commands = ["init", "uninstall", "analyze", "--help", "-h"]
-
-    if not args:
-        # No args: analyze HEAD
-        sys.argv = ["semantic-diff", "analyze", "HEAD"]
-    elif args[0] not in known_commands and not args[0].startswith("-"):
-        # First arg is not a command, treat as commit hash
-        sys.argv = ["semantic-diff", "analyze"] + args
-    elif args[0].startswith("-") and args[0] not in ["--help", "-h"]:
-        # Flags without command: analyze HEAD with flags
-        sys.argv = ["semantic-diff", "analyze", "HEAD"] + args
-
+    sys.argv = ["semantic-diff"] + route_args(sys.argv[1:])
     main()
 
 

@@ -4,6 +4,7 @@ Console formatter for semantic diff output using Rich
 
 from rich import box
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -57,8 +58,8 @@ class ConsoleFormatter:
 
         self.console.print(
             Panel(
-                f"[bold]{analysis.commit_message}[/bold]\n"
-                f"[dim]{analysis.commit_hash[:8]} • {len(analysis.files_changed)} files[/dim]",
+                f"[bold]{escape(analysis.change_set.title)}[/bold]\n"
+                f"[dim]{self._scope_line(analysis)}[/dim]",
                 title="📋 Semantic Diff",
                 border_style="blue",
             )
@@ -125,6 +126,21 @@ class ConsoleFormatter:
 
         self.console.print()
 
+    @staticmethod
+    def _commit_count(analysis: SemanticAnalysis) -> str:
+        return f"{len(analysis.change_set.commits)} commits"
+
+    def _scope_line(self, analysis: SemanticAnalysis) -> str:
+        parts = [analysis.change_set.ref, f"{len(analysis.files_changed)} files"]
+        if analysis.change_set.kind == "merge_request":
+            parts.append(self._commit_count(analysis))
+        return " • ".join(parts)
+
+    def _when_or_size(self, analysis: SemanticAnalysis) -> str:
+        if analysis.change_set.kind == "merge_request":
+            return self._commit_count(analysis)
+        return analysis.change_set.date or ""
+
     def _format_full(self, analysis: SemanticAnalysis) -> None:
         """Print full analysis output"""
 
@@ -132,9 +148,10 @@ class ConsoleFormatter:
         self.console.print()
         self.console.print(
             Panel(
-                f"[bold]{analysis.commit_message}[/bold]\n\n"
-                f"[dim]{analysis.commit_hash[:8]} by {analysis.author}[/dim]\n"
-                f"[dim]{analysis.date}[/dim]",
+                f"[bold]{escape(analysis.change_set.title)}[/bold]\n\n"
+                f"[dim]{analysis.change_set.ref} by "
+                f"{escape(', '.join(analysis.change_set.authors))}[/dim]\n"
+                f"[dim]{self._when_or_size(analysis)}[/dim]",
                 title="📋 Semantic Diff Analysis",
                 border_style="blue",
             )

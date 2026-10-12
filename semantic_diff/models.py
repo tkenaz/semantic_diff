@@ -3,7 +3,7 @@ Data models for semantic diff analysis
 """
 
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -24,6 +24,28 @@ class FileChange(BaseModel):
     deletions: int = 0
     diff_content: str = ""
     language: Optional[str] = None
+
+
+class CommitRef(BaseModel):
+    """One commit inside a change set"""
+
+    short_hash: str
+    subject: str
+    author: str
+
+
+class ChangeSet(BaseModel):
+    """The unit under review: a single commit or a merge request range"""
+
+    kind: Literal["commit", "merge_request"]
+    ref: str  # short hash, or "<merge-base>..<head>" for a range
+    head_sha: str
+    base_sha: Optional[str] = None
+    title: str
+    description: str = ""
+    authors: List[str] = Field(default_factory=list)
+    date: Optional[str] = None
+    commits: List[CommitRef] = Field(default_factory=list)
 
 
 class Intent(BaseModel):
@@ -77,12 +99,9 @@ class ReviewQuestion(BaseModel):
 
 
 class SemanticAnalysis(BaseModel):
-    """Complete semantic analysis of a commit"""
+    """Complete semantic analysis of a change set (commit or merge request)"""
 
-    commit_hash: str
-    commit_message: str
-    author: str
-    date: str
+    change_set: ChangeSet
     files_changed: List[FileChange]
 
     intent: Intent

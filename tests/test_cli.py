@@ -10,7 +10,7 @@ import pytest
 from click.testing import CliRunner
 from git import Repo
 
-from semantic_diff.cli import main
+from semantic_diff.cli import cli, main, route_args
 
 
 class TestCLIHelp:
@@ -107,7 +107,7 @@ class TestCLIWithMockedAnalyzer:
             pytest.fail(f"Output is not valid JSON: {e}\n{result.output}")
 
         # Check structure
-        assert "commit_hash" in data
+        assert data["change_set"]["kind"] == "commit"
         assert "intent" in data
         assert "risk_assessment" in data
         assert "files_changed" in data
@@ -124,8 +124,8 @@ class TestCLIWithMockedAnalyzer:
         data = json.loads(result.output)
 
         # Verify key fields match mock data
-        assert data["commit_message"] == mock_semantic_analysis.commit_message
-        assert data["author"] == mock_semantic_analysis.author
+        assert data["change_set"]["title"] == mock_semantic_analysis.change_set.title
+        assert data["change_set"]["authors"] == mock_semantic_analysis.change_set.authors
         assert data["intent"]["summary"] == mock_semantic_analysis.intent.summary
 
     def test_console_output_is_formatted(self, temp_git_repo, mock_llm_analyzer, capsys):
@@ -213,8 +213,9 @@ class TestCLIWithMockedAnalyzer:
 
         assert result.exit_code == 0
         # Should analyze HEAD commit
-        data = json.loads(result.output)
-        assert "commit_hash" in data
+        assert json.loads(result.output)["change_set"]["kind"] == "commit"
+        change_set = mock_llm_analyzer.return_value.analyze.call_args.args[0]
+        assert change_set.head_sha == commit_hash
 
     def test_brief_flag_produces_compact_output(self, temp_git_repo, mock_llm_analyzer):
         """Test that --brief flag produces compact console output"""
@@ -266,9 +267,11 @@ class TestCLIEdgeCases:
             mock_parser = MagicMock()
             mock_parser.get_commit_info.return_value = {
                 "hash": "abc123",
+                "short_hash": "abc123",
                 "message": "Empty",
                 "author": "test@example.com",
                 "date": "2024-01-01",
+                "parents": [],
             }
             mock_parser.get_file_changes.return_value = []  # No changes
             mock_parser_class.return_value = mock_parser
@@ -295,8 +298,8 @@ class TestCLIEdgeCases:
             result = runner.invoke(main, ["analyze", "HEAD", "--json"])
 
         assert result.exit_code == 0
-        commit_info = mock_analyzer_class.return_value.analyze.call_args.args[0]
-        assert commit_info["hash"] == commit_hash
+        change_set = mock_analyzer_class.return_value.analyze.call_args.args[0]
+        assert change_set.head_sha == commit_hash
 
     def test_verbose_shows_traceback_on_error(self, tmp_path):
         """Test that --verbose shows full traceback on errors"""
@@ -350,3 +353,37 @@ class TestCLIIntegration:
             result = runner.invoke(main, ["analyze", short_hash, "--repo", repo_path])
 
             assert result.exit_code == 0
+
+
+class TestEntryPointRouting:
+    """`semantic-diff` (the console script) routes bare commits/flags to `analyze`."""
+
+    @pytest.mark.parametrize(
+        "args, routed",
+        [
+            ([], ["analyze", "HEAD"]),
+            (["abc123"], ["analyze", "abc123"]),
+            (["abc123", "--json"], ["analyze", "abc123", "--json"]),
+            (["--json"], ["analyze", "HEAD", "--json"]),
+            (["--help"], ["--help"]),
+            (["-h"], ["-h"]),
+            (["analyze", "HEAD"], ["analyze", "HEAD"]),
+            (["init"], ["init"]),
+            (["mr", "--base", "origin/dev"], ["mr", "--base", "origin/dev"]),
+        ],
+    )
+    def test_routes_arguments(self, args, routed):
+        assert route_args(args) == routed
+
+    def test_every_registered_command_is_routed_as_itself(self):
+        for name in main.commands:
+            assert route_args([name]) == [name]
+
+    def test_console_script_runs_mr(self, mr_repo, monkeypatch, capsys):
+        monkeypatch.setattr("sys.argv", ["semantic-diff", "mr", "--repo", mr_repo["path"]])
+
+        with pytest.raises(SystemExit):
+            cli()
+
+        # reached `mr` itself (asks for --base), not `analyze mr` ("Could not find commit: mr")
+        assert "--base is required" in capsys.readouterr().err

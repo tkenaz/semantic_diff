@@ -44,17 +44,32 @@ class MarkdownFormatter:
         """Generate markdown string from analysis"""
         lines = []
 
-        # Header - escape user-controlled content
-        lines.append(f"# Semantic Diff: {analysis.commit_hash[:8]}")
+        # Header - escape user-controlled content (title, authors, subjects)
+        cs = analysis.change_set
+        lines.append(f"# Semantic Diff: {cs.ref}")
         lines.append("")
-        lines.append(f"**Commit:** `{analysis.commit_hash}`")
-        lines.append(f"**Author:** {self._escape_md(analysis.author)}")
-        lines.append(f"**Date:** {analysis.date}")
+        if cs.kind == "merge_request":
+            lines.append(
+                f"**Merge request:** `{cs.ref}` (base `{cs.base_sha}` → head `{cs.head_sha}`)"
+            )
+            authors = ", ".join(self._escape_md(a) for a in cs.authors)
+            lines.append(f"**Authors:** {authors}")
+        else:
+            lines.append(f"**Commit:** `{cs.head_sha}`")
+            lines.append(f"**Author:** {self._escape_md(', '.join(cs.authors))}")
+        if cs.date:
+            lines.append(f"**Date:** {cs.date}")
         lines.append("")
-        # Escape commit message - could contain malicious markdown/HTML
-        escaped_msg = self._escape_md(analysis.commit_message)
-        lines.append(f"> {escaped_msg}")
+        lines.append(f"> {self._escape_md(cs.title)}")
         lines.append("")
+        if cs.kind == "merge_request":
+            lines.append(f"### Commits ({len(cs.commits)})")
+            lines.append("")
+            for c in cs.commits:
+                lines.append(
+                    f"- `{c.short_hash}` {self._escape_md(c.subject)} — {self._escape_md(c.author)}"
+                )
+            lines.append("")
 
         # Files Changed
         lines.append("## 📁 Files Changed")
@@ -154,9 +169,10 @@ class MarkdownFormatter:
         """Save analysis to markdown file in output_dir"""
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Filename: <short_hash>_<timestamp>.md
+        # Filename: [mr_]<short head>_<timestamp>.md
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{analysis.commit_hash[:8]}_{timestamp}.md"
+        prefix = "mr_" if analysis.change_set.kind == "merge_request" else ""
+        filename = f"{prefix}{analysis.change_set.head_sha[:8]}_{timestamp}.md"
         filepath = output_dir / filename
 
         content = self.format(analysis)

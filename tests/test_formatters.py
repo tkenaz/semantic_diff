@@ -27,8 +27,8 @@ class TestMarkdownFormatter:
         assert "## ❓ Review Questions" in output
 
         # Check commit info is present
-        assert mock_semantic_analysis.commit_hash[:8] in output
-        assert mock_semantic_analysis.author in output
+        assert mock_semantic_analysis.change_set.ref in output
+        assert mock_semantic_analysis.change_set.authors[0] in output
 
         # Check table structure for files
         assert "| File | Change | + | - | Lang |" in output
@@ -95,8 +95,8 @@ class TestMarkdownFormatter:
         formatter = MarkdownFormatter()
 
         # Create analysis with malicious commit message
-        malicious_analysis = mock_semantic_analysis.model_copy()
-        malicious_analysis.commit_message = "<script>alert('xss')</script> Fix bug"
+        malicious_analysis = mock_semantic_analysis.model_copy(deep=True)
+        malicious_analysis.change_set.title = "<script>alert('xss')</script> Fix bug"
 
         output = formatter.format(malicious_analysis)
 
@@ -146,7 +146,7 @@ class TestMarkdownFormatter:
         assert saved_path.is_file()
 
         # Check filename format: <short_hash>_<timestamp>.md
-        assert saved_path.name.startswith(mock_semantic_analysis.commit_hash[:8])
+        assert saved_path.name.startswith(mock_semantic_analysis.change_set.head_sha[:8] + "_")
         assert saved_path.name.endswith(".md")
 
     def test_save_file_contains_formatted_content(self, mock_semantic_analysis, tmp_path):
@@ -194,6 +194,68 @@ class TestMarkdownFormatter:
         assert formatter._risk_icon(RiskLevel.CRITICAL) == "🔥"
 
 
+class TestMarkdownFormatterMergeRequest:
+    def test_header_shows_range_title_and_authors(self, mock_mr_analysis):
+        output = MarkdownFormatter().format(mock_mr_analysis)
+
+        assert output.startswith("# Semantic Diff: 0123abcd..abc123de")
+        assert "**Merge request:** `0123abcd..abc123de`" in output
+        assert "**Authors:** Dev One &lt;d1@x&gt;, Dev Two &lt;d2@x&gt;" in output
+        assert "> AHUB-1 Add JWT authentication" in output
+        assert "**Commit:**" not in output
+
+    def test_lists_commits_oldest_first(self, mock_mr_analysis):
+        output = MarkdownFormatter().format(mock_mr_analysis)
+
+        first = output.index("`11111111` feat: add jwt")
+        second = output.index("`22222222` test: jwt expiry")
+        assert "### Commits (2)" in output
+        assert first < second
+
+    def test_commit_subjects_are_escaped(self, mock_mr_analysis):
+        analysis = mock_mr_analysis.model_copy(deep=True)
+        analysis.change_set.commits[0].subject = "<img src=x onerror=alert(1)>"
+
+        output = MarkdownFormatter().format(analysis)
+
+        assert "<img" not in output
+
+    def test_report_filename_is_prefixed(self, mock_mr_analysis, tmp_path):
+        saved = MarkdownFormatter().save(mock_mr_analysis, tmp_path)
+
+        assert saved.name.startswith("mr_abc123de_")
+
+    def test_commit_report_has_no_commit_list(self, mock_semantic_analysis):
+        output = MarkdownFormatter().format(mock_semantic_analysis)
+
+        assert "### Commits" not in output
+
+
+class TestConsoleFormatterMergeRequest:
+    def test_full_header_shows_range_and_commit_count(self, mock_mr_analysis, capsys):
+        ConsoleFormatter().format(mock_mr_analysis)
+
+        output = capsys.readouterr().out
+        assert "AHUB-1 Add JWT authentication" in output
+        assert "0123abcd..abc123de" in output
+        assert "2 commits" in output
+
+    def test_title_is_not_interpreted_as_rich_markup(self, mock_mr_analysis, capsys):
+        analysis = mock_mr_analysis.model_copy(deep=True)
+        analysis.change_set.title = "[red]Totally safe[/red]"
+
+        ConsoleFormatter().format(analysis)
+        ConsoleFormatter(brief=True).format(analysis)
+
+        assert capsys.readouterr().out.count("[red]Totally safe[/red]") == 2
+
+    def test_brief_header_shows_commit_count(self, mock_mr_analysis, capsys):
+        ConsoleFormatter(brief=True).format(mock_mr_analysis)
+
+        output = capsys.readouterr().out
+        assert "2 commits" in output
+
+
 class TestConsoleFormatter:
     """Test ConsoleFormatter terminal output"""
 
@@ -217,9 +279,9 @@ class TestConsoleFormatter:
         output = captured.out
 
         # Check commit info is present
-        assert mock_semantic_analysis.commit_message in output
-        assert mock_semantic_analysis.commit_hash[:8] in output
-        assert mock_semantic_analysis.author in output
+        assert mock_semantic_analysis.change_set.title in output
+        assert mock_semantic_analysis.change_set.ref in output
+        assert mock_semantic_analysis.change_set.authors[0] in output
 
     def test_format_includes_analysis_sections(self, mock_semantic_analysis, capsys):
         """Test that all major analysis sections are included"""
@@ -345,8 +407,8 @@ class TestConsoleFormatterBriefMode:
         output = capsys.readouterr().out
 
         # Should include commit info
-        assert mock_semantic_analysis.commit_hash[:8] in output
-        assert mock_semantic_analysis.commit_message in output
+        assert mock_semantic_analysis.change_set.ref in output
+        assert mock_semantic_analysis.change_set.title in output
 
         # Should include intent summary
         assert mock_semantic_analysis.intent.summary in output

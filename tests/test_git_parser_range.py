@@ -7,68 +7,9 @@ base of target and source to the source head.
 """
 
 import pytest
-from git import Actor, Repo
 
 from semantic_diff.parsers.git_parser import GitParser
-
-AUTHOR = Actor("Dev One", "dev1@example.com")
-OTHER = Actor("Dev Two", "dev2@example.com")
-
-
-def _commit(repo, tmp_path, files: dict, message: str, author=AUTHOR, remove=()):
-    for name, content in files.items():
-        path = tmp_path / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
-    if files:
-        repo.index.add(list(files.keys()))
-    if remove:
-        repo.index.remove(list(remove), working_tree=True)
-    return repo.index.commit(message, author=author, committer=author)
-
-
-@pytest.fixture
-def mr_repo(tmp_path):
-    """
-    target: base ── target_only
-               \\
-    feature:    c1 ── c2 ── c3
-
-    c1 touches api.py, c2 adds util.py, c3 touches api.py again.
-    target_only touches docs.md after the branch point.
-    """
-    repo = Repo.init(tmp_path)
-    base = _commit(
-        repo,
-        tmp_path,
-        {
-            "api.py": "def get():\n    return 1\n",
-            "docs.md": "v1\n",
-            "models.py": "".join(f"FIELD_{i} = {i}\n" for i in range(10)),
-        },
-        "base",
-    )
-    target = repo.create_head("target", base)
-    feature = repo.create_head("feature", base)
-
-    feature.checkout()
-    c1 = _commit(repo, tmp_path, {"api.py": "def get():\n    return 2\n"}, "feat: return 2")
-    c2 = _commit(repo, tmp_path, {"util.py": "X = 1\n"}, "feat: add util", author=OTHER)
-    c3 = _commit(
-        repo, tmp_path, {"api.py": "def get():\n    return 3\n"}, "fix: return 3\n\nbody text"
-    )
-
-    target.checkout()
-    target_only = _commit(repo, tmp_path, {"docs.md": "v2\n"}, "docs: target moved on")
-
-    return {
-        "path": str(tmp_path),
-        "repo": repo,
-        "base": base,
-        "commits": [c1, c2, c3],
-        "target_tip": target_only,
-        "head": c3,
-    }
+from tests.conftest import AUTHOR, _commit
 
 
 class TestGetRangeChanges:
