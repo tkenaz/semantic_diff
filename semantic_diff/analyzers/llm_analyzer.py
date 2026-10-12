@@ -155,6 +155,17 @@ Be specific and actionable. Avoid generic observations."""
         ]
         return "\n".join(lines)
 
+    def _extract_response_text(self, response) -> str:
+        """Return the first text block of a model response.
+
+        Models with extended thinking may put a thinking block first, so
+        content[0] is not guaranteed to be text.
+        """
+        for block in response.content:
+            if getattr(block, "type", None) == "text":
+                return block.text
+        raise ValueError("Model response contains no text block")
+
     def _parse_response(self, response_text: str) -> dict:
         """Extract JSON from Claude's response"""
         # Try to find JSON block
@@ -365,7 +376,7 @@ Be specific and actionable. Avoid generic observations."""
         }
 
         # Parse and validate response
-        response_text = response.content[0].text
+        response_text = self._extract_response_text(response)
         data = self._parse_response(response_text)
         data = self._validate_response_data(data)
 

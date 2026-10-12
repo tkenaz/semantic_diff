@@ -431,14 +431,19 @@ class TestAnalyze:
         """Test analyze returns properly structured SemanticAnalysis"""
         # Mock response
         mock_response = Mock()
-        mock_response.content = [Mock(text="""```json
+        mock_response.content = [
+            Mock(
+                type="text",
+                text="""```json
 {
     "intent": {"summary": "Test change", "reasoning": "Testing", "confidence": 0.9},
     "impact_map": {"direct_impacts": [], "indirect_impacts": [], "affected_components": []},
     "risk_assessment": {"overall_risk": "low", "risks": [], "breaking_changes": false, "requires_migration": false},
     "review_questions": []
 }
-```""")]
+```""",
+            )
+        ]
         mock_response.usage.input_tokens = 100
         mock_response.usage.output_tokens = 50
 
@@ -485,7 +490,8 @@ class TestAnalyze:
         mock_response = Mock()
         mock_response.content = [
             Mock(
-                text='{"intent": {"summary": "Empty", "reasoning": "No files", "confidence": 0.5}}'
+                type="text",
+                text='{"intent": {"summary": "Empty", "reasoning": "No files", "confidence": 0.5}}',
             )
         ]
         mock_response.usage.input_tokens = 50
@@ -539,3 +545,31 @@ class TestRetryAfterHeader:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestExtractResponseText:
+    """Test _extract_response_text method (thinking-first responses, issue found 12.10)"""
+
+    @pytest.fixture
+    def analyzer(self):
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+            with patch("anthropic.Anthropic"):
+                return LLMAnalyzer()
+
+    def test_text_block_first(self, analyzer):
+        response = Mock(content=[Mock(type="text", text="hello")])
+        assert analyzer._extract_response_text(response) == "hello"
+
+    def test_thinking_block_first(self, analyzer):
+        response = Mock(
+            content=[
+                Mock(type="thinking", thinking="pondering..."),
+                Mock(type="text", text="the answer"),
+            ]
+        )
+        assert analyzer._extract_response_text(response) == "the answer"
+
+    def test_no_text_block_raises(self, analyzer):
+        response = Mock(content=[Mock(type="thinking", thinking="only thoughts")])
+        with pytest.raises(ValueError, match="no text block"):
+            analyzer._extract_response_text(response)
