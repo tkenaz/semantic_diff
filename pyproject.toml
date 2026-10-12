@@ -58,3 +58,10 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
 ignore = ["E501"]
+
+[tool.mutmut]
+paths_to_mutate = ["semantic_diff/"]
+tests_dir = ["tests/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

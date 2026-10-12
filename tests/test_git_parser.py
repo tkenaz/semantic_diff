@@ -363,14 +363,9 @@ class TestGetFileChanges:
         parser = GitParser(str(tmp_path))
         changes = parser.get_file_changes(commit.hexsha)
 
-        assert len(changes) >= 1
-
-        # Check if any change is marked as renamed
-        renamed_changes = [c for c in changes if c.change_type == "renamed"]
-        if renamed_changes:
-            change = renamed_changes[0]
-            assert "old_name.py" in change.path
-            assert "new_name.py" in change.path
+        assert [(c.change_type, c.path) for c in changes] == [
+            ("renamed", "old_name.py -> new_name.py")
+        ]
 
     def test_get_file_changes_binary_file(self, tmp_path):
         """Test file changes with binary file"""

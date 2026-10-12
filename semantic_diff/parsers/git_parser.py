@@ -118,51 +118,76 @@ class GitParser:
             return changes
 
         # Normal commit with parent
-        parent = commit.parents[0]
-        diffs = parent.diff(commit, create_patch=True)
+        return self._diff_to_changes(commit.parents[0], commit)
 
-        for diff in diffs:
-            # Determine change type
-            if diff.new_file:
-                change_type = "added"
-                path = diff.b_path
-            elif diff.deleted_file:
-                change_type = "deleted"
-                path = diff.a_path
-            elif diff.renamed:
-                change_type = "renamed"
-                path = f"{diff.a_path} -> {diff.b_path}"
-            else:
-                change_type = "modified"
-                path = diff.b_path or diff.a_path
+    def get_range_info(self, base_ref: str, head_ref: str) -> dict:
+        """
+        Get information about a change range (e.g. a merge request).
+        Commits are those reachable from head but not from base, oldest first.
+        """
+        merge_base, head = self._resolve_range(base_ref, head_ref)
+        commits = list(self.repo.iter_commits(f"{merge_base.hexsha}..{head.hexsha}", reverse=True))
+        entries = [
+            {
+                "hash": c.hexsha,
+                "short_hash": c.hexsha[:8],
+                "subject": c.message.strip().split("\n")[0],
+                "author": f"{c.author.name} <{c.author.email}>",
+            }
+            for c in commits
+        ]
+        return {
+            "merge_base": merge_base.hexsha,
+            "head": head.hexsha,
+            "short_range": f"{merge_base.hexsha[:8]}..{head.hexsha[:8]}",
+            "commits": entries,
+            "authors": list(dict.fromkeys(e["author"] for e in entries)),
+        }
 
-            # Get diff content
-            try:
-                diff_content = diff.diff.decode("utf-8", errors="replace")
-            except (UnicodeDecodeError, AttributeError, TypeError):
-                diff_content = "[binary file]"
+    def get_range_changes(self, base_ref: str, head_ref: str) -> List[FileChange]:
+        """
+        Get file changes of a range with merge-request semantics:
+        diff from merge-base(base, head) to head (three-dot), like GitLab's MR Changes tab.
+        """
+        merge_base, head = self._resolve_range(base_ref, head_ref)
+        return self._diff_to_changes(merge_base, head)
 
-            # Count additions/deletions
-            additions = 0
-            deletions = 0
-            for line in diff_content.split("\n"):
-                if line.startswith("+") and not line.startswith("+++"):
-                    additions += 1
-                elif line.startswith("-") and not line.startswith("---"):
-                    deletions += 1
+    def _resolve_range(self, base_ref: str, head_ref: str):
+        base = self.get_commit(base_ref)
+        head = self.get_commit(head_ref)
+        merge_bases = self.repo.merge_base(base, head)
+        if not merge_bases:
+            raise ValueError(f"No common ancestor between {base_ref} and {head_ref}")
+        return merge_bases[0], head
 
-            changes.append(
-                FileChange(
-                    path=path,
-                    change_type=change_type,
-                    additions=additions,
-                    deletions=deletions,
-                    diff_content=diff_content[:5000],  # Limit size for LLM
-                    language=self.detect_language(path),
-                )
-            )
+    def _diff_to_changes(self, old, new) -> List[FileChange]:
+        return [self._to_file_change(d) for d in old.diff(new, create_patch=True)]
 
-        return changes
+    def _to_file_change(self, diff) -> FileChange:
+        if diff.new_file:
+            change_type, path = "added", diff.b_path
+        elif diff.deleted_file:
+            change_type, path = "deleted", diff.a_path
+        elif diff.renamed_file:
+            change_type, path = "renamed", f"{diff.a_path} -> {diff.b_path}"
+        else:
+            change_type, path = "modified", diff.b_path
+
+        # GitPython strips the ---/+++ file headers from diff.diff, so every
+        # +/- line is content - including "++i;" or "--x" in C-like code.
+        diff_content = diff.diff.decode("utf-8", errors="replace")
+        lines = diff_content.split("\n")
+        additions = sum(1 for line in lines if line.startswith("+"))
+        deletions = sum(1 for line in lines if line.startswith("-"))
+
+        return FileChange(
+            path=path,
+            change_type=change_type,
+            additions=additions,
+            deletions=deletions,
+            diff_content=diff_content[:5000],  # Limit size for LLM
+            language=self.detect_language(diff.b_path or diff.a_path),
+        )
 
     def get_project_context(self, max_files: int = 20) -> dict:
         """
