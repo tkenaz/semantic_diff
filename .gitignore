@@ -22,3 +22,9 @@ build/
 # Working files
 CLAUDE_NOTES.md
 PERSPECTIVES.md
+
+# Generated output
+semantic_diff_reports/
+kenaz-out/
+.coverage
+coverage.json
