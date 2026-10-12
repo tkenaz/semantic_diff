@@ -2,48 +2,25 @@
 Tests for LLMAnalyzer - Claude-based semantic analyzer
 """
 
-import os
-from unittest.mock import Mock, patch
-
-import anthropic
 import pytest
 
 from semantic_diff.analyzers.llm_analyzer import LLMAnalyzer
 from semantic_diff.models import FileChange, RiskLevel
+from semantic_diff.providers import Completion
 
 
-class TestLLMAnalyzerInit:
-    """Test LLMAnalyzer initialization"""
+class ScriptedProvider:
+    """Fake LLMProvider: returns a scripted completion and records calls."""
 
-    def test_init_without_api_key(self):
-        """Test initialization without API key raises ValueError"""
-        with patch.dict(os.environ, {}, clear=True):
-            with patch("semantic_diff.analyzers.llm_analyzer.load_dotenv"):
-                with pytest.raises(ValueError, match="ANTHROPIC_API_KEY not found"):
-                    LLMAnalyzer()
+    model = "scripted-model"
 
-    def test_init_with_api_key_from_env(self):
-        """Test initialization with API key from environment"""
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            with patch("anthropic.Anthropic"):
-                analyzer = LLMAnalyzer()
-                assert analyzer.api_key == "test-key"
+    def __init__(self, completion: Completion | None = None):
+        self.completion = completion or Completion(text="{}", input_tokens=0, output_tokens=0)
+        self.calls = []
 
-    def test_init_with_custom_model(self):
-        """Test initialization with custom model"""
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            with patch("anthropic.Anthropic"):
-                analyzer = LLMAnalyzer(model="claude-3-opus")
-                assert analyzer.model == "claude-3-opus"
-
-    def test_init_with_model_from_env(self):
-        """Test initialization with model from environment"""
-        with patch.dict(
-            os.environ, {"ANTHROPIC_API_KEY": "test-key", "SEMANTIC_DIFF_MODEL": "claude-3-haiku"}
-        ):
-            with patch("anthropic.Anthropic"):
-                analyzer = LLMAnalyzer()
-                assert analyzer.model == "claude-3-haiku"
+    def complete(self, prompt, *, max_tokens):
+        self.calls.append({"prompt": prompt, "max_tokens": max_tokens})
+        return self.completion
 
 
 class TestFormatFilesSummary:
@@ -51,9 +28,7 @@ class TestFormatFilesSummary:
 
     @pytest.fixture
     def analyzer(self):
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            with patch("anthropic.Anthropic"):
-                return LLMAnalyzer()
+        return LLMAnalyzer(ScriptedProvider())
 
     def test_format_single_file(self, analyzer):
         """Test formatting single file"""
@@ -105,9 +80,7 @@ class TestFormatDiffs:
 
     @pytest.fixture
     def analyzer(self):
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            with patch("anthropic.Anthropic"):
-                return LLMAnalyzer()
+        return LLMAnalyzer(ScriptedProvider())
 
     def test_format_single_diff(self, analyzer):
         """Test formatting single diff"""
@@ -158,9 +131,7 @@ class TestFormatProjectContext:
 
     @pytest.fixture
     def analyzer(self):
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            with patch("anthropic.Anthropic"):
-                return LLMAnalyzer()
+        return LLMAnalyzer(ScriptedProvider())
 
     def test_format_full_context(self, analyzer):
         """Test formatting full project context"""
@@ -191,9 +162,7 @@ class TestParseResponse:
 
     @pytest.fixture
     def analyzer(self):
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            with patch("anthropic.Anthropic"):
-                return LLMAnalyzer()
+        return LLMAnalyzer(ScriptedProvider())
 
     def test_parse_json_in_code_block(self, analyzer):
         """Test parsing JSON in ```json block"""
@@ -238,9 +207,7 @@ class TestValidateResponseData:
 
     @pytest.fixture
     def analyzer(self):
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            with patch("anthropic.Anthropic"):
-                return LLMAnalyzer()
+        return LLMAnalyzer(ScriptedProvider())
 
     def test_validate_empty_data(self, analyzer):
         """Test validation fills defaults for empty data"""
@@ -290,151 +257,18 @@ class TestValidateResponseData:
         assert result["risk_assessment"]["overall_risk"] == "low"
 
 
-class TestCallApiWithRetry:
-    """Test _call_api_with_retry method"""
-
-    @pytest.fixture
-    def analyzer(self):
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            with patch("anthropic.Anthropic"):
-                a = LLMAnalyzer()
-                a.client = Mock()
-                return a
-
-    def test_successful_call(self, analyzer):
-        """Test successful API call without retry"""
-        mock_response = Mock()
-        analyzer.client.messages.create.return_value = mock_response
-
-        result = analyzer._call_api_with_retry("test prompt", max_retries=3)
-        assert result == mock_response
-        assert analyzer.client.messages.create.call_count == 1
-
-    def test_retry_on_rate_limit(self, analyzer):
-        """Test retry on rate limit error"""
-        mock_response = Mock()
-        rate_limit_error = anthropic.RateLimitError(
-            message="Rate limited", response=Mock(status_code=429), body={}
-        )
-
-        analyzer.client.messages.create.side_effect = [rate_limit_error, mock_response]
-
-        with patch("time.sleep"):  # Skip actual sleep
-            result = analyzer._call_api_with_retry(
-                "test prompt", max_retries=3, base_delay=0.01, max_total_wait=100
-            )
-
-        assert result == mock_response
-        assert analyzer.client.messages.create.call_count == 2
-
-    def test_retry_on_timeout(self, analyzer):
-        """Test retry on timeout error"""
-        mock_response = Mock()
-        timeout_error = anthropic.APITimeoutError(request=Mock())
-
-        analyzer.client.messages.create.side_effect = [timeout_error, mock_response]
-
-        with patch("time.sleep"):
-            result = analyzer._call_api_with_retry(
-                "test prompt", max_retries=3, base_delay=0.01, max_total_wait=100
-            )
-
-        assert result == mock_response
-
-    def test_retry_on_connection_error(self, analyzer):
-        """Test retry on connection error"""
-        mock_response = Mock()
-        conn_error = anthropic.APIConnectionError(request=Mock())
-
-        analyzer.client.messages.create.side_effect = [conn_error, mock_response]
-
-        with patch("time.sleep"):
-            result = analyzer._call_api_with_retry(
-                "test prompt", max_retries=3, base_delay=0.01, max_total_wait=100
-            )
-
-        assert result == mock_response
-
-    def test_retry_on_server_error(self, analyzer):
-        """Test retry on 5xx server error"""
-        mock_response = Mock()
-        server_error = anthropic.APIStatusError(
-            message="Server error", response=Mock(status_code=500), body={}
-        )
-
-        analyzer.client.messages.create.side_effect = [server_error, mock_response]
-
-        with patch("time.sleep"):
-            result = analyzer._call_api_with_retry(
-                "test prompt", max_retries=3, base_delay=0.01, max_total_wait=100
-            )
-
-        assert result == mock_response
-
-    def test_no_retry_on_client_error(self, analyzer):
-        """Test no retry on 4xx client error (except rate limit)"""
-        client_error = anthropic.APIStatusError(
-            message="Bad request", response=Mock(status_code=400), body={}
-        )
-
-        analyzer.client.messages.create.side_effect = client_error
-
-        with pytest.raises(anthropic.APIStatusError):
-            analyzer._call_api_with_retry("test prompt", max_retries=3)
-
-        assert analyzer.client.messages.create.call_count == 1
-
-    def test_exhausted_retries(self, analyzer):
-        """Test RuntimeError after exhausting retries"""
-        rate_limit_error = anthropic.RateLimitError(
-            message="Rate limited", response=Mock(status_code=429), body={}
-        )
-
-        analyzer.client.messages.create.side_effect = rate_limit_error
-
-        with patch("time.sleep"):
-            with pytest.raises(RuntimeError, match="API call failed after"):
-                analyzer._call_api_with_retry(
-                    "test prompt", max_retries=2, base_delay=0.01, max_total_wait=100
-                )
-
-    def test_max_total_wait_exceeded(self, analyzer):
-        """Test stopping when max_total_wait is exceeded"""
-        rate_limit_error = anthropic.RateLimitError(
-            message="Rate limited", response=Mock(status_code=429), body={}
-        )
-
-        analyzer.client.messages.create.side_effect = rate_limit_error
-
-        with patch("time.sleep"):
-            with pytest.raises(RuntimeError):
-                analyzer._call_api_with_retry(
-                    "test prompt",
-                    max_retries=10,
-                    base_delay=10,  # Large delay
-                    max_total_wait=0.001,  # Very small max wait
-                )
-
-
 class TestAnalyze:
     """Test analyze method - full integration"""
 
     @pytest.fixture
     def analyzer(self):
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            with patch("anthropic.Anthropic"):
-                a = LLMAnalyzer()
-                a.client = Mock()
-                return a
+        return LLMAnalyzer(ScriptedProvider())
 
     def test_analyze_returns_semantic_analysis(self, analyzer):
         """Test analyze returns properly structured SemanticAnalysis"""
         # Mock response
-        mock_response = Mock()
-        mock_response.content = [
-            Mock(
-                type="text",
-                text="""```json
+        analyzer.provider.completion = Completion(
+            text="""```json
 {
     "intent": {"summary": "Test change", "reasoning": "Testing", "confidence": 0.9},
     "impact_map": {"direct_impacts": [], "indirect_impacts": [], "affected_components": []},
@@ -442,12 +276,9 @@ class TestAnalyze:
     "review_questions": []
 }
 ```""",
-            )
-        ]
-        mock_response.usage.input_tokens = 100
-        mock_response.usage.output_tokens = 50
-
-        analyzer.client.messages.create.return_value = mock_response
+            input_tokens=100,
+            output_tokens=50,
+        )
 
         commit_info = {
             "hash": "abc123def456",
@@ -484,20 +315,38 @@ class TestAnalyze:
         assert result.intent.confidence == 0.9
         assert result.risk_assessment.overall_risk == RiskLevel.LOW
         assert result.tokens_used == 150
+        assert result.analysis_model == "scripted-model"
+        assert analyzer.last_usage == {
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "total_tokens": 150,
+        }
+
+    def test_analyze_sends_prompt_with_commit_and_diff(self, analyzer):
+        analyzer.provider.completion = Completion(text="{}", input_tokens=1, output_tokens=1)
+        commit_info = {
+            "hash": "abc123def456",
+            "short_hash": "abc123de",
+            "message": "Tighten auth",
+            "author": "Test <test@test.com>",
+            "date": "2024-01-01T00:00:00",
+        }
+        files = [FileChange(path="auth.py", change_type="modified", diff_content="+strict = True")]
+
+        analyzer.analyze(commit_info, files, {})
+
+        (call,) = analyzer.provider.calls
+        assert call["max_tokens"] == 4096
+        assert "Tighten auth" in call["prompt"]
+        assert "+strict = True" in call["prompt"]
 
     def test_analyze_with_empty_files(self, analyzer):
         """Test analyze with empty file list"""
-        mock_response = Mock()
-        mock_response.content = [
-            Mock(
-                type="text",
-                text='{"intent": {"summary": "Empty", "reasoning": "No files", "confidence": 0.5}}',
-            )
-        ]
-        mock_response.usage.input_tokens = 50
-        mock_response.usage.output_tokens = 25
-
-        analyzer.client.messages.create.return_value = mock_response
+        analyzer.provider.completion = Completion(
+            text='{"intent": {"summary": "Empty", "reasoning": "No files", "confidence": 0.5}}',
+            input_tokens=50,
+            output_tokens=25,
+        )
 
         commit_info = {
             "hash": "abc123",
@@ -511,65 +360,3 @@ class TestAnalyze:
 
         assert result is not None
         assert result.intent.summary == "Empty"
-
-
-class TestRetryAfterHeader:
-    """Test Retry-After header handling"""
-
-    @pytest.fixture
-    def analyzer(self):
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            with patch("anthropic.Anthropic"):
-                a = LLMAnalyzer()
-                a.client = Mock()
-                return a
-
-    def test_retry_after_numeric(self, analyzer):
-        """Test handling numeric Retry-After value"""
-        mock_response = Mock()
-        rate_limit_error = anthropic.RateLimitError(
-            message="Rate limited", response=Mock(status_code=429), body={}
-        )
-        rate_limit_error.retry_after = 2.0
-
-        analyzer.client.messages.create.side_effect = [rate_limit_error, mock_response]
-
-        with patch("time.sleep") as mock_sleep:
-            analyzer._call_api_with_retry("test", max_retries=3, base_delay=1.0, max_total_wait=100)
-
-            # Should use retry_after value (plus jitter)
-            assert mock_sleep.called
-            actual_delay = mock_sleep.call_args[0][0]
-            assert actual_delay >= 2.0  # At least retry_after value
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
-class TestExtractResponseText:
-    """Test _extract_response_text method (thinking-first responses, issue found 12.10)"""
-
-    @pytest.fixture
-    def analyzer(self):
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            with patch("anthropic.Anthropic"):
-                return LLMAnalyzer()
-
-    def test_text_block_first(self, analyzer):
-        response = Mock(content=[Mock(type="text", text="hello")])
-        assert analyzer._extract_response_text(response) == "hello"
-
-    def test_thinking_block_first(self, analyzer):
-        response = Mock(
-            content=[
-                Mock(type="thinking", thinking="pondering..."),
-                Mock(type="text", text="the answer"),
-            ]
-        )
-        assert analyzer._extract_response_text(response) == "the answer"
-
-    def test_no_text_block_raises(self, analyzer):
-        response = Mock(content=[Mock(type="thinking", thinking="only thoughts")])
-        with pytest.raises(ValueError, match="no text block"):
-            analyzer._extract_response_text(response)

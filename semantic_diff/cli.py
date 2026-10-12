@@ -13,6 +13,7 @@ from semantic_diff.analyzers.llm_analyzer import LLMAnalyzer
 from semantic_diff.formatters.console_formatter import ConsoleFormatter
 from semantic_diff.formatters.markdown_formatter import MarkdownFormatter
 from semantic_diff.parsers.git_parser import GitParser
+from semantic_diff.providers import build_provider
 
 REPORTS_DIR_NAME = "semantic_diff_reports"
 
@@ -129,7 +130,7 @@ def _do_analyze(
         if verbose:
             click.echo("Calling LLM for analysis...")
 
-        analyzer = LLMAnalyzer(model=model)
+        analyzer = LLMAnalyzer(build_provider(model=model))
         analysis = analyzer.analyze(commit_info, files, project_context)
 
         if output_json:

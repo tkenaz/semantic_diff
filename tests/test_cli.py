@@ -80,7 +80,10 @@ class TestCLIWithMockedAnalyzer:
     @pytest.fixture
     def mock_llm_analyzer(self, mock_semantic_analysis):
         """Mock the LLM analyzer to return test data without API calls"""
-        with patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class:
+        with (
+            patch("semantic_diff.cli.build_provider"),
+            patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class,
+        ):
             mock_instance = MagicMock()
             mock_instance.analyze.return_value = mock_semantic_analysis
             mock_analyzer_class.return_value = mock_instance
@@ -186,20 +189,19 @@ class TestCLIWithMockedAnalyzer:
         assert content.startswith("# Semantic Diff:")
         assert "## 🎯 Intent" in content
 
-    def test_model_flag_passes_to_analyzer(self, temp_git_repo):
-        """Test that --model flag is passed to the analyzer"""
+    def test_model_flag_passes_to_provider(self, temp_git_repo):
+        """Test that --model flag reaches the provider the analyzer is built with"""
         repo_path, repo, commit_hash = temp_git_repo
         runner = CliRunner()
 
-        with patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class:
-            mock_instance = MagicMock()
-            mock_analyzer_class.return_value = mock_instance
-
-            # This will fail because no API key, but we can check the call
+        with (
+            patch("semantic_diff.cli.build_provider") as build_provider,
+            patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class,
+        ):
             runner.invoke(main, ["analyze", "HEAD", "--repo", repo_path, "--model", "custom-model"])
 
-            # Verify LLMAnalyzer was instantiated with the model
-            mock_analyzer_class.assert_called_once_with(model="custom-model")
+            build_provider.assert_called_once_with(model="custom-model")
+            mock_analyzer_class.assert_called_once_with(build_provider.return_value)
 
     def test_default_commit_is_head(self, temp_git_repo, mock_llm_analyzer):
         """Test that default commit is HEAD when not specified"""
@@ -277,17 +279,24 @@ class TestCLIEdgeCases:
             assert result.exit_code == 0
             assert "No changes found" in result.output
 
-    def test_current_directory_when_no_repo_specified(self):
-        """Test that CLI uses current directory when --repo not specified"""
+    def test_current_directory_when_no_repo_specified(
+        self, temp_git_repo, monkeypatch, mock_semantic_analysis
+    ):
+        """Test that CLI analyzes the repo in the current directory when --repo is omitted"""
+        repo_path, repo, commit_hash = temp_git_repo
+        monkeypatch.chdir(repo_path)
         runner = CliRunner()
 
-        # This will fail if current directory is not a git repo
-        # We're testing the error message contains the right info
-        result = runner.invoke(main, ["analyze", "HEAD"])
+        with (
+            patch("semantic_diff.cli.build_provider"),
+            patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class,
+        ):
+            mock_analyzer_class.return_value.analyze.return_value = mock_semantic_analysis
+            result = runner.invoke(main, ["analyze", "HEAD", "--json"])
 
-        # Either succeeds (if run in a git repo) or fails with repo error
-        if result.exit_code != 0:
-            assert "Error:" in result.output
+        assert result.exit_code == 0
+        commit_info = mock_analyzer_class.return_value.analyze.call_args.args[0]
+        assert commit_info["hash"] == commit_hash
 
     def test_verbose_shows_traceback_on_error(self, tmp_path):
         """Test that --verbose shows full traceback on errors"""
@@ -308,7 +317,10 @@ class TestCLIIntegration:
         """Test complete workflow: real git repo -> mocked analysis -> console output"""
         repo_path, repo, commit_hash = temp_git_repo
 
-        with patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class:
+        with (
+            patch("semantic_diff.cli.build_provider"),
+            patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class,
+        ):
             mock_instance = MagicMock()
             mock_instance.analyze.return_value = mock_semantic_analysis
             mock_analyzer_class.return_value = mock_instance
@@ -324,7 +336,10 @@ class TestCLIIntegration:
         """Test that short commit hashes work"""
         repo_path, repo, commit_hash = temp_git_repo
 
-        with patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class:
+        with (
+            patch("semantic_diff.cli.build_provider"),
+            patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class,
+        ):
             mock_instance = MagicMock()
             mock_instance.analyze.return_value = mock_semantic_analysis
             mock_analyzer_class.return_value = mock_instance

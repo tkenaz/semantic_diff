@@ -30,12 +30,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+openai = [
+    "openai>=1.40.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
     "mypy>=1.0.0",
+    "openai>=1.40.0",
+    "mutmut>=3.0.0",
 ]
 
 [project.scripts]

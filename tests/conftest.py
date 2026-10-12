@@ -20,6 +20,25 @@ from semantic_diff.models import (
 )
 
 
+@pytest.fixture(autouse=True)
+def no_real_llm_credentials(monkeypatch):
+    """
+    Guard: no test may reach a real LLM API. Strips credentials from the
+    environment and stops .env from re-injecting them.
+    """
+    for name in (
+        "ANTHROPIC_API_KEY",
+        "SEMANTIC_DIFF_API_KEY",
+        "SEMANTIC_DIFF_BASE_URL",
+        "SEMANTIC_DIFF_PROVIDER",
+        "SEMANTIC_DIFF_MODEL",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("semantic_diff.providers.factory.load_dotenv", lambda *a, **k: None)
+
+
 @pytest.fixture
 def temp_git_repo(tmp_path):
     """

@@ -138,6 +138,24 @@ ANTHROPIC_API_KEY=sk-ant-...
 SEMANTIC_DIFF_MODEL=claude-sonnet-5-5  # or claude-opus-5-5
 ```
 
+### OpenAI-compatible gateways
+
+Any gateway that speaks the OpenAI Chat Completions protocol (LiteLLM, vLLM,
+corporate LLM hubs, OpenAI itself) works through the `openai` provider:
+
+```bash
+pip install 'semantic-diff[openai]'
+
+SEMANTIC_DIFF_PROVIDER=openai
+SEMANTIC_DIFF_BASE_URL=https://your-gateway.example/v1
+SEMANTIC_DIFF_API_KEY=...
+SEMANTIC_DIFF_MODEL=claude-sonnet-4.6   # required: model ids differ per gateway
+```
+
+Retries (rate limits honour `Retry-After`, timeouts, 5xx) are handled once for
+all providers: `SEMANTIC_DIFF_MAX_RETRIES` (attempts, default 3) and
+`SEMANTIC_DIFF_MAX_WAIT` (seconds, default 30).
+
 ## Commands
 
 | Command | Description |
