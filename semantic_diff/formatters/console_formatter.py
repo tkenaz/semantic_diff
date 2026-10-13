@@ -134,12 +134,30 @@ class ConsoleFormatter:
         parts = [analysis.change_set.ref, f"{len(analysis.files_changed)} files"]
         if analysis.change_set.kind == "merge_request":
             parts.append(self._commit_count(analysis))
+        if analysis.diff_coverage is not None:
+            parts.append(f"diff {analysis.diff_coverage.percent}%")
         return " • ".join(parts)
 
     def _when_or_size(self, analysis: SemanticAnalysis) -> str:
         if analysis.change_set.kind == "merge_request":
             return self._commit_count(analysis)
         return analysis.change_set.date or ""
+
+    @staticmethod
+    def _coverage_suffix(analysis: SemanticAnalysis) -> str:
+        if analysis.diff_coverage is None:
+            return ""
+        return f" • diff {analysis.diff_coverage.percent}%"
+
+    def _warn_unseen(self, analysis: SemanticAnalysis) -> None:
+        cov = analysis.diff_coverage
+        if cov is None or not cov.omitted:
+            return
+        noun = "file" if len(cov.omitted) == 1 else "files"
+        self.console.print(
+            f"[yellow]⚠ {len(cov.omitted)} {noun} not shown to the model "
+            f"(over the diff budget): {escape(', '.join(cov.omitted))}[/yellow]"
+        )
 
     def _format_full(self, analysis: SemanticAnalysis) -> None:
         """Print full analysis output"""
@@ -151,11 +169,13 @@ class ConsoleFormatter:
                 f"[bold]{escape(analysis.change_set.title)}[/bold]\n\n"
                 f"[dim]{analysis.change_set.ref} by "
                 f"{escape(', '.join(analysis.change_set.authors))}[/dim]\n"
-                f"[dim]{self._when_or_size(analysis)}[/dim]",
+                f"[dim]{self._when_or_size(analysis)}"
+                f"{self._coverage_suffix(analysis)}[/dim]",
                 title="📋 Semantic Diff Analysis",
                 border_style="blue",
             )
         )
+        self._warn_unseen(analysis)
 
         # Files changed summary
         files_table = Table(box=box.SIMPLE, show_header=True, header_style="bold")

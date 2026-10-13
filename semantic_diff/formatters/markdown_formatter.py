@@ -34,6 +34,10 @@ class MarkdownFormatter:
         text = re.sub(r"([<>])", r"\\\1", text)
         return text
 
+    def _escape_path(self, path: str) -> str:
+        """File names may carry *, _, [ or ` - keep them literal, not formatting"""
+        return re.sub(r"([\\`*_\[\]])", r"\\\1", self._escape_md(path))
+
     def _escape_inline_code(self, text: str) -> str:
         """Escape backticks in inline code content"""
         if not text:
@@ -70,6 +74,8 @@ class MarkdownFormatter:
                     f"- `{c.short_hash}` {self._escape_md(c.subject)} — {self._escape_md(c.author)}"
                 )
             lines.append("")
+
+        lines += self._coverage_lines(analysis)
 
         # Files Changed
         lines.append("## 📁 Files Changed")
@@ -164,6 +170,23 @@ class MarkdownFormatter:
         )
 
         return "\n".join(lines)
+
+    def _coverage_lines(self, analysis: SemanticAnalysis) -> list:
+        cov = analysis.diff_coverage
+        if cov is None:
+            return []
+        lines = [
+            f"**Diff coverage:** {cov.percent}% of changed lines "
+            f"(budget {cov.budget_tokens:,} tokens)"
+        ]
+        for label, paths in (
+            ("Trimmed to whole hunks", cov.trimmed),
+            ("Not shown (over budget)", cov.omitted),
+            ("Skipped (lock/generated/binary)", cov.noise),
+        ):
+            if paths:
+                lines.append(f"- {label}: {', '.join(self._escape_path(p) for p in paths)}")
+        return lines + [""]
 
     def save(self, analysis: SemanticAnalysis, output_dir: Path) -> Path:
         """Save analysis to markdown file in output_dir"""

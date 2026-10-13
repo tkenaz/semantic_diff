@@ -470,26 +470,59 @@ class TestGetFileChanges:
             expected_lang = files[change.path]
             assert change.language == expected_lang
 
-    def test_get_file_changes_diff_truncation(self, tmp_path):
-        """Test that large diffs are truncated to 5000 chars"""
+    def test_get_file_changes_of_an_older_commit_not_head(self, tmp_path):
         repo = Repo.init(tmp_path)
+        (tmp_path / "a.py").write_text("1\n")
+        repo.index.add(["a.py"])
+        repo.index.commit("Initial commit")
+        (tmp_path / "a.py").write_text("2\n")
+        repo.index.add(["a.py"])
+        older = repo.index.commit("change a")
+        (tmp_path / "b.py").write_text("x\n")
+        repo.index.add(["b.py"])
+        repo.index.commit("add b")
+        (tmp_path / "a.py").write_text("3\n")  # dirty working tree too
 
-        # Create file with very long content
-        large_content = "line\n" * 2000  # More than 5000 chars
-        file_path = tmp_path / "large.txt"
-        file_path.write_text(large_content)
+        changes = GitParser(str(tmp_path)).get_file_changes(older.hexsha)
 
+        assert [(c.path, c.diff_content) for c in changes] == [("a.py", "@@ -1 +1 @@\n-1\n+2\n")]
+
+    def test_get_file_changes_keeps_large_diffs_whole(self, tmp_path):
+        """Size is budgeted later by diff_pack, at hunk boundaries - never cut here"""
+        repo = Repo.init(tmp_path)
+        (tmp_path / "base.txt").write_text("x\n")
+        repo.index.add(["base.txt"])
+        repo.index.commit("Initial commit")
+        (tmp_path / "large.txt").write_text("line\n" * 2000)
         repo.index.add(["large.txt"])
         commit = repo.index.commit("Add large file")
 
-        parser = GitParser(str(tmp_path))
-        changes = parser.get_file_changes(commit.hexsha)
+        [change] = GitParser(str(tmp_path)).get_file_changes(commit.hexsha)
 
-        assert len(changes) == 1
-        change = changes[0]
+        assert change.additions == 2000
+        assert change.diff_content.endswith("+line\n")
 
-        # Diff should be truncated
-        assert len(change.diff_content) <= 5000
+    def test_initial_commit_diff_marks_every_line_as_added(self, tmp_path):
+        repo = Repo.init(tmp_path)
+        (tmp_path / "f.py").write_text("a\nb\nc\n")
+        repo.index.add(["f.py"])
+        commit = repo.index.commit("Initial commit")
+
+        [change] = GitParser(str(tmp_path)).get_file_changes(commit.hexsha)
+
+        assert change.diff_content == "@@ -0,0 +1,3 @@\n+a\n+b\n+c\n"
+        assert (change.change_type, change.additions, change.deletions) == ("added", 3, 0)
+
+    def test_initial_commit_binary_file_gets_git_binary_marker(self, tmp_path):
+        repo = Repo.init(tmp_path)
+        (tmp_path / "logo.png").write_bytes(b"\x00\x01png")
+        repo.index.add(["logo.png"])
+        commit = repo.index.commit("Initial commit")
+
+        [change] = GitParser(str(tmp_path)).get_file_changes(commit.hexsha)
+
+        assert change.diff_content.startswith("Binary files ")
+        assert (change.path, change.change_type, change.additions) == ("logo.png", "added", 0)
 
 
 class TestGetProjectContext:

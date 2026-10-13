@@ -156,6 +156,16 @@ Retries (rate limits honour `Retry-After`, timeouts, 5xx) are handled once for
 all providers: `SEMANTIC_DIFF_MAX_RETRIES` (attempts, default 3) and
 `SEMANTIC_DIFF_MAX_WAIT` (seconds, default 30).
 
+### Diff budget
+
+Large changes are not cut blindly. Diffs are packed into a token budget
+(`--max-diff-tokens` / `SEMANTIC_DIFF_MAX_DIFF_TOKENS`, default 60,000):
+code first, then migrations, CI/infra, tests, docs. A file that does not fit
+whole is trimmed at hunk boundaries, never mid-line. Lock files, generated
+output and binaries are listed but never shown. The model is told which files
+it did not see, and every report states the coverage, e.g.
+`Diff coverage: 87% of changed lines` plus the trimmed/not-shown files.
+
 ## Commands
 
 | Command | Description |
@@ -164,6 +174,9 @@ all providers: `SEMANTIC_DIFF_MAX_RETRIES` (attempts, default 3) and
 | `semantic-diff <hash>` | Analyze specific commit |
 | `semantic-diff --save` | Save report to `semantic_diff_reports/` |
 | `semantic-diff --json` | Output as JSON |
+| `semantic-diff mr --base origin/main` | Analyze a whole merge request (merge-base..HEAD) |
+| `semantic-diff mr --gitlab-env` | Same, inside a GitLab MR pipeline (reads `CI_MERGE_REQUEST_*`) |
+| `--max-diff-tokens N` | Diff budget for the prompt (default 60000) |
 | `semantic-diff init` | Install pre-push hook |
 | `semantic-diff uninstall` | Remove pre-push hook |
 

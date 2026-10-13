@@ -91,6 +91,7 @@ def no_real_llm_credentials(monkeypatch):
         "ANTHROPIC_API_KEY",
         "SEMANTIC_DIFF_API_KEY",
         "SEMANTIC_DIFF_BASE_URL",
+        "SEMANTIC_DIFF_MAX_DIFF_TOKENS",
         "SEMANTIC_DIFF_PROVIDER",
         "SEMANTIC_DIFF_MODEL",
         "OPENAI_API_KEY",

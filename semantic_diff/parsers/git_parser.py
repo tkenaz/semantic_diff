@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import List, Optional
 
-from git import InvalidGitRepositoryError, Repo
+from git import NULL_TREE, InvalidGitRepositoryError, Repo
 from git.exc import NoSuchPathError
 
 from semantic_diff.models import FileChange
@@ -91,33 +91,12 @@ class GitParser:
         Returns structured FileChange objects.
         """
         commit = self.get_commit(commit_hash)
-        changes = []
 
-        # Handle initial commit (no parents)
         if not commit.parents:
-            for item in commit.tree.traverse():
-                if item.type == "blob":
-                    content = ""
-                    diff_content = "[binary file]"
-                    try:
-                        content = item.data_stream.read().decode("utf-8", errors="replace")
-                        diff_content = f"+{content}"
-                    except (UnicodeDecodeError, IOError, OSError):
-                        pass  # Keep defaults: empty content, binary marker
+            # GitPython already flips sides for NULL_TREE: this reads as
+            # "empty tree -> commit", so every file comes out as added
+            return [self._to_file_change(d) for d in commit.diff(NULL_TREE, create_patch=True)]
 
-                    changes.append(
-                        FileChange(
-                            path=item.path,
-                            change_type="added",
-                            additions=len(content.split("\n")) if content else 0,
-                            deletions=0,
-                            diff_content=diff_content[:5000],  # Limit size
-                            language=self.detect_language(item.path),
-                        )
-                    )
-            return changes
-
-        # Normal commit with parent
         return self._diff_to_changes(commit.parents[0], commit)
 
     def get_range_info(self, base_ref: str, head_ref: str) -> dict:
@@ -185,7 +164,7 @@ class GitParser:
             change_type=change_type,
             additions=additions,
             deletions=deletions,
-            diff_content=diff_content[:5000],  # Limit size for LLM
+            diff_content=diff_content,
             language=self.detect_language(diff.b_path or diff.a_path),
         )
 

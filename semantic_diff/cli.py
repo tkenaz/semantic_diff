@@ -13,6 +13,7 @@ import click
 
 from semantic_diff.analyzers.llm_analyzer import LLMAnalyzer
 from semantic_diff.change_set import from_commit, from_range
+from semantic_diff.diff_pack import DEFAULT_BUDGET_TOKENS
 from semantic_diff.formatters.console_formatter import ConsoleFormatter
 from semantic_diff.formatters.markdown_formatter import MarkdownFormatter
 from semantic_diff.gitlab_env import gitlab_mr_context
@@ -81,6 +82,14 @@ def _output_options(command):
             "--brief", "-b", is_flag=True, help="Brief output (intent + risk + top questions)"
         ),
         click.option("--verbose", "-v", is_flag=True, help="Verbose output"),
+        click.option(
+            "--max-diff-tokens",
+            type=click.IntRange(min=1),
+            default=DEFAULT_BUDGET_TOKENS,
+            show_default=True,
+            envvar="SEMANTIC_DIFF_MAX_DIFF_TOKENS",
+            help="Token budget for diffs in the prompt; the report states coverage",
+        ),
     ]
     for option in reversed(options):
         command = option(command)
@@ -167,6 +176,7 @@ def _run(
     save: bool,
     brief: bool,
     verbose: bool,
+    max_diff_tokens: int,
 ):
     """Shared pipeline: collect the change set, analyze it, render/save the result."""
     # Mutual exclusion: --brief and --verbose don't make sense together
@@ -176,24 +186,24 @@ def _run(
 
     try:
         if verbose:
-            click.echo(f"Initializing parser for {repo}...")
+            click.echo(f"Initializing parser for {repo}...", err=True)
 
         parser = GitParser(repo if repo != "." else None)
         change_set, files = collect(parser)
         project_context = parser.get_project_context()
 
         if verbose:
-            click.echo(f"Found {len(files)} changed files")
-            click.echo(f"Project languages: {project_context.get('languages', [])}")
+            click.echo(f"Found {len(files)} changed files", err=True)
+            click.echo(f"Project languages: {project_context.get('languages', [])}", err=True)
 
         if change_set is None or not files:
             click.echo("No changes found.", err=True)
             sys.exit(0)
 
         if verbose:
-            click.echo("Calling LLM for analysis...")
+            click.echo("Calling LLM for analysis...", err=True)
 
-        analyzer = LLMAnalyzer(build_provider(model=model))
+        analyzer = LLMAnalyzer(build_provider(model=model), max_diff_tokens=max_diff_tokens)
         analysis = analyzer.analyze(change_set, files, project_context)
 
         if output_json:
@@ -204,7 +214,7 @@ def _run(
         if save:
             reports_dir = Path(parser.repo.working_dir) / REPORTS_DIR_NAME
             saved_path = MarkdownFormatter().save(analysis, reports_dir)
-            click.echo(f"\nReport saved: {saved_path}")
+            click.echo(f"\nReport saved: {saved_path}", err=True)
 
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)

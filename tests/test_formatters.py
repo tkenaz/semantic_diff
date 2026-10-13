@@ -5,6 +5,7 @@ Tests for formatters - console and markdown output
 from semantic_diff.formatters.console_formatter import ConsoleFormatter
 from semantic_diff.formatters.markdown_formatter import MarkdownFormatter
 from semantic_diff.models import (
+    DiffCoverage,
     FileChange,
     RiskLevel,
 )
@@ -512,3 +513,72 @@ class TestConsoleFormatterBriefMode:
         # Should not crash and should show basic info
         assert len(output) > 0
         assert "LOW" in output
+
+
+PARTIAL = DiffCoverage(
+    budget_tokens=60_000,
+    shown_lines=870,
+    total_lines=1000,
+    trimmed=["src/core.py"],
+    omitted=["src/big_*.py", "src/huge.py"],
+    noise=["pnpm-lock.yaml"],
+)
+
+
+class TestDiffCoverageInReports:
+    def test_markdown_states_coverage_and_every_gap(self, mock_mr_analysis):
+        analysis = mock_mr_analysis.model_copy(update={"diff_coverage": PARTIAL})
+
+        report = MarkdownFormatter().format(analysis)
+
+        assert "**Diff coverage:** 87% of changed lines (budget 60,000 tokens)" in report
+        assert "- Trimmed to whole hunks: src/core.py" in report
+        assert "- Not shown (over budget): src/big\\_\\*.py, src/huge.py" in report
+        assert "pnpm-lock.yaml\n\n## 📁 Files Changed" in report
+        assert "- Skipped (lock/generated/binary): pnpm-lock.yaml" in report
+
+    def test_markdown_full_coverage_has_no_gap_lines(self, mock_mr_analysis):
+        full = DiffCoverage(budget_tokens=60_000, shown_lines=5, total_lines=5)
+        analysis = mock_mr_analysis.model_copy(update={"diff_coverage": full})
+
+        report = MarkdownFormatter().format(analysis)
+
+        assert "**Diff coverage:** 100% of changed lines" in report
+        assert "Not shown" not in report
+        assert "Trimmed" not in report
+
+    def test_markdown_without_coverage_says_nothing_about_it(self, mock_mr_analysis):
+        assert "Diff coverage" not in MarkdownFormatter().format(mock_mr_analysis)
+
+    def test_console_shows_coverage_in_both_modes(self, mock_mr_analysis, capsys):
+        analysis = mock_mr_analysis.model_copy(update={"diff_coverage": PARTIAL})
+
+        ConsoleFormatter().format(analysis)
+        ConsoleFormatter(brief=True).format(analysis)
+
+        output = capsys.readouterr().out
+        assert output.count(" • diff 87%") == 2
+
+    def test_console_warns_when_files_were_not_seen(self, mock_mr_analysis, capsys):
+        analysis = mock_mr_analysis.model_copy(update={"diff_coverage": PARTIAL})
+
+        ConsoleFormatter().format(analysis)
+
+        output = " ".join(capsys.readouterr().out.split())
+        assert "2 files not shown to the model" in output
+        assert "src/big_*.py, src/huge.py" in output
+
+    def test_console_warning_singular(self, mock_mr_analysis, capsys):
+        one = PARTIAL.model_copy(update={"omitted": ["src/huge.py"]})
+        analysis = mock_mr_analysis.model_copy(update={"diff_coverage": one})
+
+        ConsoleFormatter().format(analysis)
+
+        assert "1 file not shown to the model" in capsys.readouterr().out
+
+    def test_console_without_coverage_omits_it(self, mock_mr_analysis, capsys):
+        ConsoleFormatter().format(mock_mr_analysis)
+
+        output = capsys.readouterr().out
+        assert "diff " not in output
+        assert "not shown" not in output

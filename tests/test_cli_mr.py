@@ -236,3 +236,86 @@ class TestMrJsonStdoutStaysParseable:
 
         _change_set, _files, context = analyzer.return_value.analyze.call_args.args
         assert "python" in context["languages"]
+
+    def test_save_message_goes_to_stderr_with_json(self, mr_repo, analyzer):
+        result = CliRunner().invoke(
+            main,
+            [
+                "mr",
+                "--base",
+                "target",
+                "--head",
+                "feature",
+                "--repo",
+                mr_repo["path"],
+                "--json",
+                "--save",
+            ],
+        )
+
+        assert json.loads(result.stdout)["change_set"]["kind"] == "merge_request"
+        assert "Report saved" in result.stderr
+
+    def test_verbose_progress_goes_to_stderr_with_json(self, mr_repo, analyzer):
+        result = CliRunner().invoke(
+            main,
+            [
+                "mr",
+                "--base",
+                "target",
+                "--head",
+                "feature",
+                "--repo",
+                mr_repo["path"],
+                "--json",
+                "--verbose",
+            ],
+        )
+
+        assert json.loads(result.stdout)["change_set"]["kind"] == "merge_request"
+        assert "Found 2 changed files" in result.stderr
+
+
+class TestMaxDiffTokens:
+    def _invoke(self, mr_repo, *extra, env=None):
+        with (
+            patch("semantic_diff.cli.build_provider"),
+            patch("semantic_diff.cli.LLMAnalyzer") as analyzer_class,
+        ):
+            CliRunner().invoke(
+                main,
+                ["mr", "--base", "target", "--head", "feature", "--repo", mr_repo["path"], *extra],
+                env=env,
+            )
+        return analyzer_class.call_args.kwargs["max_diff_tokens"]
+
+    def test_defaults_to_sixty_thousand(self, mr_repo):
+        assert self._invoke(mr_repo) == 60_000
+
+    def test_flag_sets_the_budget(self, mr_repo):
+        assert self._invoke(mr_repo, "--max-diff-tokens", "20000") == 20_000
+
+    def test_env_var_sets_the_budget(self, mr_repo):
+        env = {"SEMANTIC_DIFF_MAX_DIFF_TOKENS": "30000"}
+
+        assert self._invoke(mr_repo, env=env) == 30_000
+
+    def test_analyze_command_accepts_it_too(self, mr_repo):
+        with (
+            patch("semantic_diff.cli.build_provider"),
+            patch("semantic_diff.cli.LLMAnalyzer") as analyzer_class,
+        ):
+            CliRunner().invoke(
+                main, ["analyze", "HEAD", "--repo", mr_repo["path"], "--max-diff-tokens", "500"]
+            )
+
+        assert analyzer_class.call_args.kwargs["max_diff_tokens"] == 500
+
+    def test_non_positive_budget_is_a_usage_error(self, mr_repo):
+        result = CliRunner().invoke(
+            main,
+            ["mr", "--base", "target", "--repo", mr_repo["path"], "--max-diff-tokens", "0"],
+        )
+
+        assert result.exit_code == 2
+        assert "0 is not in the range" in result.stderr
