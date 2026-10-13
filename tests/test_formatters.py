@@ -476,8 +476,9 @@ class TestConsoleFormatterBriefMode:
         assert "Critical question must show?" in output
         assert "High priority question?" in output
 
-        # Should show "and X more" for hidden questions
-        assert "more" in output
+        # Should show "and X more" for hidden questions - styled, not raw markup
+        assert "more (use full mode to see all)" in output
+        assert "[dim]" not in output
 
     def test_brief_mode_shows_all_critical_high_even_if_many(self, mock_semantic_analysis, capsys):
         """Test that ALL critical/high questions are shown even if >3"""

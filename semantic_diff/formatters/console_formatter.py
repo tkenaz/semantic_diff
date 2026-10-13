@@ -119,7 +119,7 @@ class ConsoleFormatter:
             hidden_count = len(analysis.review_questions) - len(questions_to_show)
             if hidden_count > 0:
                 questions_text.append(
-                    f"[dim]... and {hidden_count} more (use full mode to see all)[/dim]"
+                    f"... and {hidden_count} more (use full mode to see all)", style="dim"
                 )
 
             self.console.print(Panel(questions_text, title="❓ Top Questions", border_style="cyan"))
