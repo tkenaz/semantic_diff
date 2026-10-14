@@ -10,6 +10,29 @@ from pathlib import Path
 from semantic_diff.models import RiskLevel, SemanticAnalysis
 
 
+def escape_md(text: str) -> str:
+    """Escape markdown special characters and HTML to prevent injection"""
+    if not text:
+        return ""
+    # First escape HTML entities
+    text = html.escape(text, quote=True)
+    # Escape markdown special chars that could be used for injection
+    # but preserve basic formatting in LLM output
+    return re.sub(r"([<>])", r"\\\1", text)
+
+
+def escape_path(path: str) -> str:
+    """File names may carry *, _, [ or ` - keep them literal, not formatting"""
+    return re.sub(r"([\\`*_\[\]])", r"\\\1", escape_md(path))
+
+
+def escape_inline_code(text: str) -> str:
+    """Escape backticks in inline code content"""
+    if not text:
+        return ""
+    return text.replace("`", "\\`")
+
+
 class MarkdownFormatter:
     """Formats SemanticAnalysis as Markdown for file storage"""
 
@@ -24,25 +47,13 @@ class MarkdownFormatter:
         return self.RISK_ICONS.get(level, "•")
 
     def _escape_md(self, text: str) -> str:
-        """Escape markdown special characters and HTML to prevent injection"""
-        if not text:
-            return ""
-        # First escape HTML entities
-        text = html.escape(text, quote=True)
-        # Escape markdown special chars that could be used for injection
-        # but preserve basic formatting in LLM output
-        text = re.sub(r"([<>])", r"\\\1", text)
-        return text
+        return escape_md(text)
 
     def _escape_path(self, path: str) -> str:
-        """File names may carry *, _, [ or ` - keep them literal, not formatting"""
-        return re.sub(r"([\\`*_\[\]])", r"\\\1", self._escape_md(path))
+        return escape_path(path)
 
     def _escape_inline_code(self, text: str) -> str:
-        """Escape backticks in inline code content"""
-        if not text:
-            return ""
-        return text.replace("`", "\\`")
+        return escape_inline_code(text)
 
     def format(self, analysis: SemanticAnalysis) -> str:
         """Generate markdown string from analysis"""
