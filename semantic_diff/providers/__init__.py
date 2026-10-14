@@ -13,12 +13,13 @@ from semantic_diff.providers.base import (
 from semantic_diff.providers.factory import PROVIDERS, build_provider
 from semantic_diff.providers.retrying import RetryingProvider
 
+# OpenAICompatProvider is importable by name (see __getattr__) but kept out of
+# __all__: `import *` must work without the optional `openai` extra.
 __all__ = [
     "PROVIDERS",
     "AnthropicProvider",
     "Completion",
     "LLMProvider",
-    "OpenAICompatProvider",
     "ProviderError",
     "RateLimitError",
     "RetryingProvider",

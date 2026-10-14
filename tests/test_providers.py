@@ -526,3 +526,32 @@ class TestBuildProvider:
         with patch.dict(os.environ, {"SEMANTIC_DIFF_PROVIDER": "bard"}, clear=True):
             with pytest.raises(ValueError, match="bard.*anthropic, openai"):
                 build_provider(load_env=False)
+
+
+class TestPackageWithoutOpenAIExtra:
+    """The openai extra is optional: the package must import without it"""
+
+    @staticmethod
+    def _run_without_openai(code):
+        import subprocess
+        import sys
+
+        # sys.modules["openai"] = None makes any `import openai` raise ImportError
+        script = "import sys; sys.modules['openai'] = None\n" + code
+        return subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+
+    def test_star_import_works(self):
+        result = self._run_without_openai("from semantic_diff.providers import *")
+
+        assert result.returncode == 0, result.stderr
+
+    def test_star_import_does_not_export_the_optional_adapter(self):
+        from semantic_diff import providers
+
+        assert "OpenAICompatProvider" not in providers.__all__
+
+    def test_optional_adapter_is_still_importable_by_name(self):
+        from semantic_diff.providers import OpenAICompatProvider as Lazy
+        from semantic_diff.providers.openai_compat import OpenAICompatProvider as Direct
+
+        assert Lazy is Direct
