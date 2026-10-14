@@ -105,7 +105,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: tkenaz/semantic_diff@v0.2.0
+      - uses: tkenaz/semantic_diff@v0.3.0
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           comment_on_pr: true

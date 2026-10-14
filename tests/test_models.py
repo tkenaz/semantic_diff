@@ -135,3 +135,23 @@ def test_invalid_risk_level():
     """Test that invalid RiskLevel values are not allowed"""
     with pytest.raises(ValueError):
         RiskLevel("invalid_level")
+
+
+def test_json_carries_schema_version_first(mock_semantic_analysis):
+    """CI consumers check the schema before reading fields (v2 = change_set)"""
+    dumped = mock_semantic_analysis.model_dump()
+
+    assert next(iter(dumped)) == "schema_version"
+    assert dumped["schema_version"] == 2
+
+
+def test_package_version_matches_the_latest_changelog_release():
+    # No tomllib: the package still supports Python 3.10
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent
+    version = re.search(r'^version = "([^"]+)"', (root / "pyproject.toml").read_text(), re.M)
+    latest = re.search(r"^## \[(\d+\.\d+\.\d+)\]", (root / "CHANGELOG.md").read_text(), re.M)
+
+    assert version.group(1) == latest.group(1)

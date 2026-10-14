@@ -120,6 +120,8 @@ class ReviewQuestion(BaseModel):
 class SemanticAnalysis(BaseModel):
     """Complete semantic analysis of a change set (commit or merge request)"""
 
+    # Bump on breaking JSON changes. 2: commit fields moved under change_set
+    schema_version: int = 2
     change_set: ChangeSet
     files_changed: List[FileChange]
 

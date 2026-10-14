@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "semantic-diff"
-version = "0.1.0"
+version = "0.3.0"
 description = "AI-powered semantic analysis of git commits"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,7 +25,7 @@ dependencies = [
     "click>=8.1.0",
     "rich>=13.0.0",
     "python-dotenv>=1.0.0",
-    "gitpython>=3.1.0",
+    "gitpython>=3.1.58",  # CVE-2026-42215, -44243 and later fixes
     "pydantic>=2.0.0",
 ]
 
@@ -41,6 +41,8 @@ dev = [
     "mypy>=1.0.0",
     "openai>=1.40.0",
     "mutmut>=3.0.0",
+    "pyyaml",  # tests execute action.yml steps
+    "httpx",  # tests build SDK errors from real responses; newer SDKs ship httpx2
 ]
 
 [project.scripts]
