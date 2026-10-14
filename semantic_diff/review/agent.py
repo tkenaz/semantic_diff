@@ -3,8 +3,8 @@ The review agent: a tool-calling loop in which the model reads around the
 change until it can submit findings backed by evidence.
 
 Hard limits bound every review (turns, cumulative input tokens, the size of a
-single turn). When one is reached the model gets one last turn in which
-submit_review is the only tool, so a review always ends with what was found so
+single turn). When one is reached the model gets at most two wrap-up turns in
+which only submit_review is carried out, so a review always ends with what was found so
 far - and the report says which limit cut it short.
 """
 
@@ -89,6 +89,8 @@ How to review:
 4. Go beyond the diff: read whole changed functions, find callers and other usages with grep, compare with read_base, check schemas, config and wiring. Most real defects are found here.
 5. Check tests against claims: does each test exercise what it says? Is the new behaviour tested? Will CI actually run these tests?
 
+Diff lines are prefixed with their line number after the change; removed lines with b<N>, their line number before the change. Cite these numbers directly - there is no need to read a file again just to find a line.
+
 Findings:
 - Report only a defect you can point to: a file and line at head (at base for removed code) that you have read with a tool or seen in the diff.
 - Explain the concrete failure: which input or state leads to which wrong outcome.
@@ -118,6 +120,12 @@ WRAP_UP = (
 REJECTED = "submit_review rejected, fix and call it again: "
 CUT_OFF = " Your reply hit the output token limit: keep the submission shorter."
 NOT_SUBMITTED = "The review was not submitted."
+REFUSED = "Not run: the review budget is spent. Call submit_review now."
+
+# Wrap-up keeps every tool offered: changing the tool list (or forcing
+# tool_choice) invalidates the prompt cache. Other calls are refused instead,
+# and a second turn covers a model that ignored the first wrap-up note.
+WRAP_UP_TURNS = 2
 
 
 @dataclass(frozen=True)
@@ -155,7 +163,7 @@ class ReviewAgent:
                 FIRST_MESSAGE.format(
                     change_set=format_change_set(change_set),
                     files=format_files_summary(files),
-                    diffs=format_diffs(packed),
+                    diffs=format_diffs(packed, numbered=True),
                 )
             )
         ]
@@ -163,12 +171,15 @@ class ReviewAgent:
         last_text = ""
         last_turn: Optional[Turn] = None
 
+        tools = [*self.toolbox.specs, SUBMIT_REVIEW]
+        wrap_up_turns = 0
+
         while True:
-            limit = self._limit_reached(stats, last_turn)
-            if limit and stats.limit_hit is None:
-                stats.limit_hit = limit
-                messages[-1] = _with_note(messages[-1], WRAP_UP.format(limit=limit))
-            tools = [SUBMIT_REVIEW] if limit else [*self.toolbox.specs, SUBMIT_REVIEW]
+            if stats.limit_hit is None:
+                stats.limit_hit = self._limit_reached(stats, last_turn)
+                if stats.limit_hit:
+                    messages[-1] = _with_note(messages[-1], self._wrap_up_note(stats))
+            wrapping_up = stats.limit_hit is not None
 
             turn = self.provider.converse(
                 system, messages, tools, max_tokens=self.limits.max_output_tokens
@@ -186,20 +197,30 @@ class ReviewAgent:
                         stats.submitted = True
                         return self._report(change_set, packed, stats, submitted, last_text)
                     results.append(submitted)
-                elif not limit:
+                elif wrapping_up:
+                    results.append(ToolResult(call.id, REFUSED, is_error=True))
+                else:
                     results.append(self._run_tool(call, stats))
 
-            # The wrap-up turn was the last one: nothing more goes back to the model
-            if limit:
-                return self._report(change_set, packed, stats, None, last_text)
-            messages.extend(results or [UserMessage(NUDGE)])
+            if wrapping_up:
+                wrap_up_turns += 1
+                if wrap_up_turns >= WRAP_UP_TURNS or stats.turns >= self.limits.max_turns:
+                    return self._report(change_set, packed, stats, None, last_text)
+                messages.extend(results or [UserMessage(self._wrap_up_note(stats))])
+            else:
+                messages.extend(results or [UserMessage(NUDGE)])
+
+    @staticmethod
+    def _wrap_up_note(stats: ReviewStats) -> str:
+        return WRAP_UP.format(limit=stats.limit_hit)
 
     def _limit_reached(self, stats: ReviewStats, last_turn: Optional[Turn]) -> Optional[Limit]:
         if last_turn and last_turn.input_tokens >= self.limits.max_context_tokens:
             return "context"
         if stats.input_tokens >= self.limits.max_input_tokens:
             return "tokens"
-        if stats.turns + 1 >= self.limits.max_turns:
+        # Leave room for the wrap-up turns within max_turns
+        if stats.turns + WRAP_UP_TURNS >= self.limits.max_turns:
             return "turns"
         return None
 
@@ -261,7 +282,7 @@ def citation_for(line: int, head_lines: Optional[int], base_lines: Optional[int]
 
 
 def _normalize(path: str) -> str:
-    return path.strip().removeprefix("./")
+    return path.strip().removeprefix("./").rstrip("/")
 
 
 def _count(stats: ReviewStats, turn: Turn) -> None:

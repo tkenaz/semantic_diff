@@ -57,15 +57,16 @@ def format_files_summary(files: List[FileChange]) -> str:
     return "\n".join(lines)
 
 
-def format_diffs(packed: DiffPack) -> str:
+def format_diffs(packed: DiffPack, numbered: bool = False) -> str:
     """Render the packed diffs and name every file the model will not see"""
     blocks = []
     for shown in packed.shown:
         header = f"### {shown.file.path} ({shown.file.change_type})"
         if shown.trimmed:
             header += f" - {shown.hunks_shown} of {shown.hunks_total} hunks shown"
-        fence = fence_for(shown.text)
-        blocks.append(f"{header}\n{fence}diff\n{shown.text}\n{fence}")
+        text = number_lines(shown.text) if numbered else shown.text
+        fence = fence_for(text)
+        blocks.append(f"{header}\n{fence}diff\n{text}\n{fence}")
 
     coverage = packed.coverage
     not_shown = [f"- {path} (over the diff budget)" for path in coverage.omitted]
@@ -74,6 +75,37 @@ def format_diffs(packed: DiffPack) -> str:
         blocks.append("### Not shown\n" + "\n".join(not_shown))
 
     return "\n\n".join(blocks)
+
+
+HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def number_lines(diff: str) -> str:
+    """
+    Prefix diff lines with their line number: after the change for context and
+    added lines, "b<N>" (before the change) for removed ones. Rendered after
+    packing, so the budget does not count the prefixes.
+    """
+    out = []
+    old = new = None
+    for line in diff.split("\n"):
+        header = HUNK_HEADER.match(line)
+        if header:
+            old, new = int(header.group(1)), int(header.group(2))
+            out.append(line)
+        elif new is None or line.startswith("\\"):
+            out.append(line if new is None else f"{'':>6}{line}")
+        elif line.startswith("-"):
+            out.append(f"{'b' + str(old):>5}|{line}")
+            old += 1
+        elif line.startswith("+"):
+            out.append(f"{new:>5}|{line}")
+            new += 1
+        else:
+            out.append(f"{new:>5}|{line}")
+            old += 1
+            new += 1
+    return "\n".join(out)
 
 
 def fence_for(text: str) -> str:

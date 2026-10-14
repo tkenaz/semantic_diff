@@ -12,7 +12,6 @@ from click.testing import CliRunner
 
 from semantic_diff.cli import main
 from semantic_diff.providers import AnthropicProvider, RetryingProvider, ToolResult
-from semantic_diff.review.agent import SUBMIT_REVIEW
 from tests.test_cli_mr import _gitlab_env
 from tests.test_review_agent import ScriptedProvider, call, submit, uses
 
@@ -134,7 +133,7 @@ class TestReviewLimits:
             with patch("semantic_diff.cli.build_provider", return_value=provider):
                 _review(mr_repo, *extra, env=env)
 
-            assert provider.requests[0].tools == [SUBMIT_REVIEW]
+            assert "Review budget reached (turns)" in provider.requests[0].messages[0].text
 
     def test_default_turn_budget_is_twenty_five(self, mr_repo, model):
         _review(mr_repo)
