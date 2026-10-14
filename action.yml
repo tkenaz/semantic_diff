@@ -1,5 +1,5 @@
 name: 'Semantic Diff'
-description: 'AI-powered semantic analysis of git commits. Understand intent, assess risk, get review questions.'
+description: 'AI-powered semantic analysis of pull requests and commits. Understand intent, assess risk, get review questions.'
 author: 'Kenaz GmbH'
 
 branding:
@@ -63,49 +63,45 @@ runs:
       run: |
         pip install "git+https://github.com/${ACTION_REPO:-tkenaz/semantic_diff}@${ACTION_REF:-main}"
 
-    - name: Determine commits to analyze
-      id: commits
-      shell: bash
-      run: |
-        if [ "${{ github.event_name }}" = "pull_request" ]; then
-          # For PRs, analyze all commits in the PR
-          BASE="${{ inputs.base_ref || github.event.pull_request.base.sha }}"
-          HEAD="${{ github.event.pull_request.head.sha }}"
-          echo "base=$BASE" >> $GITHUB_OUTPUT
-          echo "head=$HEAD" >> $GITHUB_OUTPUT
-          echo "mode=pr" >> $GITHUB_OUTPUT
-        else
-          # For push, analyze the pushed commit
-          echo "head=${{ github.sha }}" >> $GITHUB_OUTPUT
-          echo "mode=commit" >> $GITHUB_OUTPUT
-        fi
-
     - name: Run semantic-diff
       id: analyze
       shell: bash
       env:
         ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
         SEMANTIC_DIFF_MODEL: ${{ inputs.model }}
+        # Event data reaches the script only as env: never as ${{ }} in run
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_REF_INPUT: ${{ inputs.base_ref }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_BODY: ${{ github.event.pull_request.body }}
+        PUSH_SHA: ${{ github.sha }}
       run: |
-        # Run analysis and capture JSON output
-        ANALYSIS=$(semantic-diff ${{ steps.commits.outputs.head }} --json)
+        # One LLM call: JSON on stdout, report saved, diagnostics on stderr
+        if [ "$EVENT_NAME" = "pull_request" ]; then
+          # The whole PR from the merge base (needs actions/checkout fetch-depth: 0)
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr_description.md"
+          ANALYSIS=$(semantic-diff mr --base "${BASE_REF_INPUT:-$PR_BASE_SHA}" --head "$PR_HEAD_SHA" \
+            --title "$PR_TITLE" --description-file "$RUNNER_TEMP/pr_description.md" --json --save)
+        else
+          ANALYSIS=$(semantic-diff analyze "$PUSH_SHA" --json --save)
+        fi
 
-        # Extract risk level
+        echo "$ANALYSIS" > "$RUNNER_TEMP/semantic_diff_analysis.json"
+
         RISK_LEVEL=$(echo "$ANALYSIS" | jq -r '.risk_assessment.overall_risk')
-        echo "risk_level=$RISK_LEVEL" >> $GITHUB_OUTPUT
+        echo "risk_level=$RISK_LEVEL" >> "$GITHUB_OUTPUT"
 
-        # Save full JSON (escape for multiline)
-        echo "analysis_json<<EOF" >> $GITHUB_OUTPUT
-        echo "$ANALYSIS" >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
+        DELIMITER="EOF_$(date +%s%N)"
+        {
+          echo "analysis_json<<$DELIMITER"
+          echo "$ANALYSIS"
+          echo "$DELIMITER"
+        } >> "$GITHUB_OUTPUT"
 
-        # Save markdown report
-        semantic-diff ${{ steps.commits.outputs.head }} --save
         REPORT_PATH=$(ls -t semantic_diff_reports/*.md | head -1)
-        echo "report_path=$REPORT_PATH" >> $GITHUB_OUTPUT
-
-        # Store for PR comment
-        echo "$ANALYSIS" > /tmp/semantic_diff_analysis.json
+        echo "report_path=$REPORT_PATH" >> "$GITHUB_OUTPUT"
 
     - name: Comment on PR
       if: inputs.comment_on_pr == 'true' && github.event_name == 'pull_request'
@@ -113,7 +109,7 @@ runs:
       with:
         script: |
           const fs = require('fs');
-          const analysis = JSON.parse(fs.readFileSync('/tmp/semantic_diff_analysis.json', 'utf8'));
+          const analysis = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/semantic_diff_analysis.json`, 'utf8'));
 
           const riskEmoji = {
             'low': '✅',
@@ -131,6 +127,12 @@ runs:
           body += `### 🎯 Intent\n`;
           body += `${analysis.intent.summary}\n\n`;
           body += `*Confidence: ${Math.round(analysis.intent.confidence * 100)}%*\n\n`;
+
+          const cov = analysis.diff_coverage;
+          if (cov && cov.percent < 100) {
+            body += `> Diff coverage: ${cov.percent}% of changed lines; `;
+            body += `${cov.omitted.length} file(s) not shown to the model\n\n`;
+          }
 
           if (analysis.risk_assessment.risks.length > 0) {
             body += `### ⚠️ Risks\n`;
@@ -151,7 +153,7 @@ runs:
             body += '\n';
           }
 
-          body += `---\n*Analyzed by [semantic-diff](https://github.com/kenaz-gmbh/semantic-diff)*`;
+          body += `---\n*Analyzed by [semantic-diff](https://github.com/tkenaz/semantic_diff)*`;
 
           // Find existing comment to update
           const { data: comments } = await github.rest.issues.listComments({
@@ -184,9 +186,10 @@ runs:
     - name: Check risk threshold
       if: inputs.fail_on_risk != 'never'
       shell: bash
+      env:
+        RISK: ${{ steps.analyze.outputs.risk_level }}
+        THRESHOLD: ${{ inputs.fail_on_risk }}
       run: |
-        RISK="${{ steps.analyze.outputs.risk_level }}"
-        THRESHOLD="${{ inputs.fail_on_risk }}"
 
         # Risk levels in order
         declare -A RISK_ORDER=( ["low"]=1 ["medium"]=2 ["high"]=3 ["critical"]=4 )
