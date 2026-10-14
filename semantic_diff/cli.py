@@ -6,10 +6,13 @@ import json
 import os
 import stat
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 import click
+from rich.console import Console
+from rich.markdown import Markdown
 
 from semantic_diff.analyzers.llm_analyzer import LLMAnalyzer
 from semantic_diff.change_set import from_commit, from_range
@@ -20,6 +23,9 @@ from semantic_diff.gitlab_env import gitlab_mr_context
 from semantic_diff.models import ChangeSet, FileChange
 from semantic_diff.parsers.git_parser import GitParser
 from semantic_diff.providers import build_provider
+from semantic_diff.review.agent import ReviewAgent, ReviewLimits
+from semantic_diff.review.markdown import ReviewMarkdownFormatter
+from semantic_diff.review.tools import Toolbox
 
 REPORTS_DIR_NAME = "semantic_diff_reports"
 
@@ -57,6 +63,7 @@ def main():
     Commands:
       semantic-diff <commit>     Analyze a commit (default: HEAD)
       semantic-diff mr           Analyze a merge request (base..head)
+      semantic-diff review       Review a merge request with an agent that reads the code
       semantic-diff init         Install pre-push hook
       semantic-diff uninstall    Remove pre-push hook
 
@@ -66,6 +73,7 @@ def main():
       semantic-diff abc123 --save
       semantic-diff mr --base origin/dev
       semantic-diff mr --gitlab-env --json
+      semantic-diff review --base origin/dev --save
       semantic-diff init
     """
     pass
@@ -109,29 +117,38 @@ def analyze_cmd(commit_hash: str, **output):
     _run(collect, **output)
 
 
-@main.command(name="mr")
-@click.option("--base", default=None, help="Target ref the MR merges into (e.g. origin/dev)")
-@click.option("--head", default=None, help="Source ref (default: HEAD)")
-@click.option("--title", default=None, help="MR title - the strongest intent signal")
-@click.option(
-    "--description-file", type=click.File("r"), default=None, help="File with the MR description"
-)
-@click.option(
-    "--gitlab-env",
-    is_flag=True,
-    help="Read base/head/title/description from GitLab MR pipeline variables",
-)
-@_output_options
-def mr_cmd(
+def _range_options(command):
+    """Options that pick a merge request range, shared by mr and review."""
+    options = [
+        click.option(
+            "--base", default=None, help="Target ref the MR merges into (e.g. origin/dev)"
+        ),
+        click.option("--head", default=None, help="Source ref (default: HEAD)"),
+        click.option("--title", default=None, help="MR title - the strongest intent signal"),
+        click.option(
+            "--description-file",
+            type=click.File("r"),
+            default=None,
+            help="File with the MR description",
+        ),
+        click.option(
+            "--gitlab-env",
+            is_flag=True,
+            help="Read base/head/title/description from GitLab MR pipeline variables",
+        ),
+    ]
+    for option in reversed(options):
+        command = option(command)
+    return command
+
+
+def _range_collector(
     base: Optional[str],
     head: Optional[str],
     title: Optional[str],
     description_file,
     gitlab_env: bool,
-    **output,
-):
-    """Analyze a whole merge request: merge-base(base, head)..head."""
-
+) -> Callable[[GitParser], Tuple[Optional[ChangeSet], List[FileChange]]]:
     def collect(parser: GitParser):
         context = gitlab_mr_context(os.environ) if gitlab_env else {}
         base_ref = base or context.get("base")
@@ -157,7 +174,110 @@ def mr_cmd(
         change_set = from_range(info, title=title or context.get("title"), description=description)
         return change_set, parser.get_range_changes(base_ref, head_ref)
 
-    _run(collect, **output)
+    return collect
+
+
+@main.command(name="mr")
+@_range_options
+@_output_options
+def mr_cmd(
+    base: Optional[str],
+    head: Optional[str],
+    title: Optional[str],
+    description_file,
+    gitlab_env: bool,
+    **output,
+):
+    """Analyze a whole merge request: merge-base(base, head)..head."""
+    _run(_range_collector(base, head, title, description_file, gitlab_env), **output)
+
+
+@main.command(name="review")
+@_range_options
+@click.option("--repo", "-r", default=".", help="Path to git repository")
+@click.option("--model", "-m", default=None, help="Model to use (needs tool calling)")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.option("--save", "-s", is_flag=True, help="Save report to semantic_diff_reports/")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option(
+    "--max-turns",
+    type=click.IntRange(min=1),
+    default=ReviewLimits.max_turns,
+    show_default=True,
+    envvar="SEMANTIC_DIFF_MAX_TURNS",
+    help="Model turns before the review must be submitted",
+)
+@click.option(
+    "--max-input-tokens",
+    type=click.IntRange(min=1),
+    default=ReviewLimits.max_input_tokens,
+    show_default=True,
+    envvar="SEMANTIC_DIFF_MAX_INPUT_TOKENS",
+    help="Input tokens summed over all turns (cached ones included) before wrap-up",
+)
+@click.option(
+    "--max-diff-tokens",
+    type=click.IntRange(min=1),
+    default=ReviewLimits.diff_budget_tokens,
+    show_default=True,
+    envvar="SEMANTIC_DIFF_REVIEW_DIFF_TOKENS",
+    help="Diff shown up front; the agent reads the rest on demand",
+)
+def review_cmd(
+    base: Optional[str],
+    head: Optional[str],
+    title: Optional[str],
+    description_file,
+    gitlab_env: bool,
+    repo: str,
+    model: Optional[str],
+    output_json: bool,
+    save: bool,
+    verbose: bool,
+    max_turns: int,
+    max_input_tokens: int,
+    max_diff_tokens: int,
+):
+    """Review a merge request: an agent reads around the change and reports findings."""
+    with _reported_errors(verbose):
+        parser = GitParser(repo if repo != "." else None)
+        collect = _range_collector(base, head, title, description_file, gitlab_env)
+        change_set, files = collect(parser)
+        if change_set is None or not files:
+            click.echo("No changes found.", err=True)
+            sys.exit(0)
+
+        provider = build_provider(model=model)
+        if not _supports_tools(provider):
+            raise ValueError(
+                "The configured provider does not support tool calling, which review needs. "
+                "Use an OpenAI-compatible gateway: SEMANTIC_DIFF_PROVIDER=openai"
+            )
+        if verbose:
+            click.echo(f"Reviewing {len(files)} changed files with {provider.model}...", err=True)
+
+        limits = ReviewLimits(
+            max_turns=max_turns,
+            max_input_tokens=max_input_tokens,
+            diff_budget_tokens=max_diff_tokens,
+        )
+        toolbox = Toolbox(parser.repo, head=change_set.head_sha, base=change_set.base_sha)
+        report = ReviewAgent(provider, toolbox, limits).review(change_set, files)
+
+        formatter = ReviewMarkdownFormatter()
+        if output_json:
+            click.echo(report.model_dump_json(indent=2))
+        else:
+            Console().print(Markdown(formatter.format(report)))
+
+        if save:
+            saved_path = formatter.save(report, Path(parser.repo.working_dir) / REPORTS_DIR_NAME)
+            click.echo(f"\nReport saved: {saved_path}", err=True)
+
+
+def _supports_tools(provider) -> bool:
+    # RetryingProvider forwards converse() to the adapter it wraps
+    return callable(getattr(getattr(provider, "inner", provider), "converse", None))
 
 
 # Also register as default command (when called without subcommand)
@@ -184,7 +304,7 @@ def _run(
         click.echo("Error: --brief and --verbose are mutually exclusive", err=True)
         sys.exit(1)
 
-    try:
+    with _reported_errors(verbose):
         if verbose:
             click.echo(f"Initializing parser for {repo}...", err=True)
 
@@ -216,6 +336,12 @@ def _run(
             saved_path = MarkdownFormatter().save(analysis, reports_dir)
             click.echo(f"\nReport saved: {saved_path}", err=True)
 
+
+@contextmanager
+def _reported_errors(verbose: bool):
+    """Any failure becomes "Error: ..." on stderr and exit code 1 (sys.exit passes through)."""
+    try:
+        yield
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)

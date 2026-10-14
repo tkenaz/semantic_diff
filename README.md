@@ -166,6 +166,33 @@ output and binaries are listed but never shown. The model is told which files
 it did not see, and every report states the coverage, e.g.
 `Diff coverage: 87% of changed lines` plus the trimmed/not-shown files.
 
+### Agentic review
+
+`semantic-diff review` goes further than `mr`: instead of one call over the
+diff, an agent reads around the change - whole functions, callers, the file
+before the change, history - with read-only tools, and submits findings tied
+to lines.
+
+```bash
+semantic-diff review --base origin/dev --save
+semantic-diff review --gitlab-env --json   # inside a GitLab MR pipeline
+```
+
+- Tools read git objects at the merge request's head and base, never the
+  working tree: uncommitted files are invisible to the model.
+- Every review is bounded: `--max-turns` (`SEMANTIC_DIFF_MAX_TURNS`, default
+  25), `--max-input-tokens` (`SEMANTIC_DIFF_MAX_INPUT_TOKENS`, default
+  1,000,000, cached tokens included) and the diff shown up front
+  (`--max-diff-tokens` / `SEMANTIC_DIFF_REVIEW_DIFF_TOKENS`, default 30,000).
+  When a limit is reached the model gets one last turn to submit what it has,
+  and the report says which limit cut the review short.
+- Each finding is checked in code: does the cited line exist (after the
+  change, or only before it), and did the model actually see the file. The
+  report flags findings that fail either check.
+- Needs a provider with tool calling: `SEMANTIC_DIFF_PROVIDER=openai`
+  (any OpenAI-compatible gateway). Prompt caching is used where the gateway
+  supports it, so each turn re-reads the conversation from cache.
+
 ## Commands
 
 | Command | Description |
@@ -177,6 +204,7 @@ it did not see, and every report states the coverage, e.g.
 | `semantic-diff mr --base origin/main` | Analyze a whole merge request (merge-base..HEAD) |
 | `semantic-diff mr --gitlab-env` | Same, inside a GitLab MR pipeline (reads `CI_MERGE_REQUEST_*`) |
 | `--max-diff-tokens N` | Diff budget for the prompt (default 60000) |
+| `semantic-diff review --base origin/main` | Agentic review of a merge request (see above) |
 | `semantic-diff init` | Install pre-push hook |
 | `semantic-diff uninstall` | Remove pre-push hook |
 

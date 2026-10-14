@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `semantic-diff review`: agentic merge request review. The model reads around
+  the change with read-only tools (`read_file`, `read_base`, `grep`,
+  `list_dir`, `git_log`) over git objects at head/base, and submits findings
+  tied to lines. Bounded by turns, cumulative input tokens and per-turn
+  context; a limit forces a final submission and is named in the report.
+- Every review finding is checked in code: the cited line exists (head or
+  base) and the file was actually seen by the model.
+- Review report as Markdown and JSON (`schema_version` 1), with turns, tool
+  calls, tokens (cache reads/writes) and files read.
+- Providers: tool-calling conversations (`converse`) with prompt caching on
+  the OpenAI-compatible adapter; retries cover them too.
+
 ## [0.3.0] - 2026-10-13
 
 ### Changed (breaking)
