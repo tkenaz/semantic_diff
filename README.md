@@ -105,7 +105,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: tkenaz/semantic_diff@v0.2.0
+      - uses: tkenaz/semantic_diff@v0.3.0
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           comment_on_pr: true
@@ -138,6 +138,61 @@ ANTHROPIC_API_KEY=sk-ant-...
 SEMANTIC_DIFF_MODEL=claude-sonnet-5-5  # or claude-opus-5-5
 ```
 
+### OpenAI-compatible gateways
+
+Any gateway that speaks the OpenAI Chat Completions protocol (LiteLLM, vLLM,
+corporate LLM hubs, OpenAI itself) works through the `openai` provider:
+
+```bash
+pip install 'semantic-diff[openai]'
+
+SEMANTIC_DIFF_PROVIDER=openai
+SEMANTIC_DIFF_BASE_URL=https://your-gateway.example/v1
+SEMANTIC_DIFF_API_KEY=...
+SEMANTIC_DIFF_MODEL=claude-sonnet-4.6   # required: model ids differ per gateway
+```
+
+Retries (rate limits honour `Retry-After`, timeouts, 5xx) are handled once for
+all providers: `SEMANTIC_DIFF_MAX_RETRIES` (attempts, default 3) and
+`SEMANTIC_DIFF_MAX_WAIT` (seconds, default 30).
+
+### Diff budget
+
+Large changes are not cut blindly. Diffs are packed into a token budget
+(`--max-diff-tokens` / `SEMANTIC_DIFF_MAX_DIFF_TOKENS`, default 60,000):
+code first, then migrations, CI/infra, tests, docs. A file that does not fit
+whole is trimmed at hunk boundaries, never mid-line. Lock files, generated
+output and binaries are listed but never shown. The model is told which files
+it did not see, and every report states the coverage, e.g.
+`Diff coverage: 87% of changed lines` plus the trimmed/not-shown files.
+
+### Agentic review
+
+`semantic-diff review` goes further than `mr`: instead of one call over the
+diff, an agent reads around the change - whole functions, callers, the file
+before the change, history - with read-only tools, and submits findings tied
+to lines.
+
+```bash
+semantic-diff review --base origin/dev --save
+semantic-diff review --gitlab-env --json   # inside a GitLab MR pipeline
+```
+
+- Tools read git objects at the merge request's head and base, never the
+  working tree: uncommitted files are invisible to the model.
+- Every review is bounded: `--max-turns` (`SEMANTIC_DIFF_MAX_TURNS`, default
+  25), `--max-input-tokens` (`SEMANTIC_DIFF_MAX_INPUT_TOKENS`, default
+  1,000,000, cached tokens included) and the diff shown up front
+  (`--max-diff-tokens` / `SEMANTIC_DIFF_REVIEW_DIFF_TOKENS`, default 30,000).
+  When a limit is reached the model gets one last turn to submit what it has,
+  and the report says which limit cut the review short.
+- Each finding is checked in code: does the cited line exist (after the
+  change, or only before it), and did the model actually see the file. The
+  report flags findings that fail either check.
+- Needs a provider with tool calling: `SEMANTIC_DIFF_PROVIDER=openai`
+  (any OpenAI-compatible gateway). Prompt caching is used where the gateway
+  supports it, so each turn re-reads the conversation from cache.
+
 ## Commands
 
 | Command | Description |
@@ -146,6 +201,11 @@ SEMANTIC_DIFF_MODEL=claude-sonnet-5-5  # or claude-opus-5-5
 | `semantic-diff <hash>` | Analyze specific commit |
 | `semantic-diff --save` | Save report to `semantic_diff_reports/` |
 | `semantic-diff --json` | Output as JSON |
+| `semantic-diff mr --base origin/main` | Analyze a whole merge request (merge-base..HEAD) |
+| `semantic-diff mr --gitlab-env` | Same, inside a GitLab MR pipeline (reads `CI_MERGE_REQUEST_*`) |
+| `--max-diff-tokens N` | Diff budget for the prompt (default 60000) |
+| `--max-output-tokens N` | Room for the model's answer (default 32000; env `SEMANTIC_DIFF_MAX_OUTPUT_TOKENS`) |
+| `semantic-diff review --base origin/main` | Agentic review of a merge request (see above) |
 | `semantic-diff init` | Install pre-push hook |
 | `semantic-diff uninstall` | Remove pre-push hook |
 

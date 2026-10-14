@@ -8,6 +8,8 @@ import pytest
 from git import Actor, Repo
 
 from semantic_diff.models import (
+    ChangeSet,
+    CommitRef,
     FileChange,
     Impact,
     ImpactMap,
@@ -18,6 +20,89 @@ from semantic_diff.models import (
     RiskLevel,
     SemanticAnalysis,
 )
+
+AUTHOR = Actor("Dev One", "dev1@example.com")
+OTHER = Actor("Dev Two", "dev2@example.com")
+
+
+def _commit(repo, tmp_path, files: dict, message: str, author=AUTHOR, remove=()):
+    for name, content in files.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    if files:
+        repo.index.add(list(files.keys()))
+    if remove:
+        repo.index.remove(list(remove), working_tree=True)
+    return repo.index.commit(message, author=author, committer=author)
+
+
+@pytest.fixture
+def mr_repo(tmp_path):
+    """
+    target: base ── target_only
+               \\
+    feature:    c1 ── c2 ── c3
+
+    c1 touches api.py, c2 adds util.py, c3 touches api.py again.
+    target_only touches docs.md after the branch point.
+    """
+    repo = Repo.init(tmp_path)
+    base = _commit(
+        repo,
+        tmp_path,
+        {
+            "api.py": "def get():\n    return 1\n",
+            "docs.md": "v1\n",
+            "models.py": "".join(f"FIELD_{i} = {i}\n" for i in range(10)),
+        },
+        "base",
+    )
+    target = repo.create_head("target", base)
+    feature = repo.create_head("feature", base)
+
+    feature.checkout()
+    c1 = _commit(repo, tmp_path, {"api.py": "def get():\n    return 2\n"}, "feat: return 2")
+    c2 = _commit(repo, tmp_path, {"util.py": "X = 1\n"}, "feat: add util", author=OTHER)
+    c3 = _commit(
+        repo, tmp_path, {"api.py": "def get():\n    return 3\n"}, "fix: return 3\n\nbody text"
+    )
+
+    target.checkout()
+    target_only = _commit(repo, tmp_path, {"docs.md": "v2\n"}, "docs: target moved on")
+
+    return {
+        "path": str(tmp_path),
+        "repo": repo,
+        "base": base,
+        "commits": [c1, c2, c3],
+        "target_tip": target_only,
+        "head": c3,
+    }
+
+
+@pytest.fixture(autouse=True)
+def no_real_llm_credentials(monkeypatch):
+    """
+    Guard: no test may reach a real LLM API. Strips credentials from the
+    environment and stops .env from re-injecting them.
+    """
+    for name in (
+        "ANTHROPIC_API_KEY",
+        "SEMANTIC_DIFF_API_KEY",
+        "SEMANTIC_DIFF_BASE_URL",
+        "SEMANTIC_DIFF_MAX_DIFF_TOKENS",
+        "SEMANTIC_DIFF_MAX_OUTPUT_TOKENS",
+        "SEMANTIC_DIFF_REVIEW_DIFF_TOKENS",
+        "SEMANTIC_DIFF_MAX_TURNS",
+        "SEMANTIC_DIFF_MAX_INPUT_TOKENS",
+        "SEMANTIC_DIFF_PROVIDER",
+        "SEMANTIC_DIFF_MODEL",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("semantic_diff.providers.factory.load_dotenv", lambda *a, **k: None)
 
 
 @pytest.fixture
@@ -74,10 +159,23 @@ def mock_semantic_analysis(mock_file_change):
     This fixture provides realistic test data without requiring an actual LLM call.
     """
     return SemanticAnalysis(
-        commit_hash="abc123def456789",
-        commit_message="Add user authentication feature",
-        author="developer@example.com",
-        date="2024-12-22T10:30:00",
+        change_set=ChangeSet(
+            kind="commit",
+            ref="abc123de",
+            head_sha="abc123def456789",
+            base_sha="0123456789abcdef",
+            title="Add user authentication feature",
+            description="JWT replaces basic auth.",
+            authors=["developer@example.com"],
+            date="2024-12-22T10:30:00",
+            commits=[
+                CommitRef(
+                    short_hash="abc123de",
+                    subject="Add user authentication feature",
+                    author="developer@example.com",
+                )
+            ],
+        ),
         files_changed=[
             mock_file_change,
             FileChange(
@@ -170,10 +268,14 @@ def mock_minimal_analysis():
     Tests formatters handling of empty/minimal data.
     """
     return SemanticAnalysis(
-        commit_hash="minimal123",
-        commit_message="Update README",
-        author="docs@example.com",
-        date="2024-12-22T12:00:00",
+        change_set=ChangeSet(
+            kind="commit",
+            ref="minimal1",
+            head_sha="minimal123",
+            title="Update README",
+            authors=["docs@example.com"],
+            date="2024-12-22T12:00:00",
+        ),
         files_changed=[
             FileChange(
                 path="README.md",
@@ -203,4 +305,30 @@ def mock_minimal_analysis():
         analysis_model="claude-sonnet-4-5-20250929",
         analysis_timestamp=datetime.now().isoformat(),
         tokens_used=234,
+    )
+
+
+@pytest.fixture
+def mock_mr_analysis(mock_semantic_analysis):
+    """The same analysis, but of a merge request range."""
+    return mock_semantic_analysis.model_copy(
+        update={
+            "change_set": ChangeSet(
+                kind="merge_request",
+                ref="0123abcd..abc123de",
+                head_sha="abc123def456789",
+                base_sha="0123abcd0123abcd",
+                title="AHUB-1 Add JWT authentication",
+                description="Replaces basic auth.",
+                authors=["Dev One <d1@x>", "Dev Two <d2@x>"],
+                commits=[
+                    CommitRef(
+                        short_hash="11111111", subject="feat: add jwt", author="Dev One <d1@x>"
+                    ),
+                    CommitRef(
+                        short_hash="22222222", subject="test: jwt expiry", author="Dev Two <d2@x>"
+                    ),
+                ],
+            )
+        }
     )

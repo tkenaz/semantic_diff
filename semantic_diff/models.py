@@ -3,9 +3,9 @@ Data models for semantic diff analysis
 """
 
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 class RiskLevel(str, Enum):
@@ -24,6 +24,47 @@ class FileChange(BaseModel):
     deletions: int = 0
     diff_content: str = ""
     language: Optional[str] = None
+
+
+class CommitRef(BaseModel):
+    """One commit inside a change set"""
+
+    short_hash: str
+    subject: str
+    author: str
+
+
+class ChangeSet(BaseModel):
+    """The unit under review: a single commit or a merge request range"""
+
+    kind: Literal["commit", "merge_request"]
+    ref: str  # short hash, or "<merge-base>..<head>" for a range
+    head_sha: str
+    base_sha: Optional[str] = None
+    title: str
+    description: str = ""
+    authors: List[str] = Field(default_factory=list)
+    date: Optional[str] = None
+    commits: List[CommitRef] = Field(default_factory=list)
+
+
+class DiffCoverage(BaseModel):
+    """How much of the change the model actually saw under the token budget"""
+
+    budget_tokens: int
+    shown_lines: int  # changed (+/-) lines included in the prompt
+    total_lines: int  # changed lines across all non-noise files
+    trimmed: List[str] = Field(default_factory=list)  # shown in part (whole hunks)
+    omitted: List[str] = Field(default_factory=list)  # not shown, budget exhausted
+    noise: List[str] = Field(default_factory=list)  # lock/generated/binary, listed only
+
+    @computed_field
+    @property
+    def percent(self) -> int:
+        # Floor: 999 of 1000 lines must not read as "100%" in a report
+        if self.total_lines == 0:
+            return 100
+        return self.shown_lines * 100 // self.total_lines
 
 
 class Intent(BaseModel):
@@ -77,12 +118,11 @@ class ReviewQuestion(BaseModel):
 
 
 class SemanticAnalysis(BaseModel):
-    """Complete semantic analysis of a commit"""
+    """Complete semantic analysis of a change set (commit or merge request)"""
 
-    commit_hash: str
-    commit_message: str
-    author: str
-    date: str
+    # Bump on breaking JSON changes. 2: commit fields moved under change_set
+    schema_version: int = 2
+    change_set: ChangeSet
     files_changed: List[FileChange]
 
     intent: Intent
@@ -94,3 +134,4 @@ class SemanticAnalysis(BaseModel):
     analysis_model: str
     analysis_timestamp: str
     tokens_used: int = 0
+    diff_coverage: Optional[DiffCoverage] = None

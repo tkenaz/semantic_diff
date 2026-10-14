@@ -2,5 +2,5 @@ anthropic>=0.40.0
 click>=8.1.0
 rich>=13.0.0
 python-dotenv>=1.0.0
-gitpython>=3.1.0
+gitpython>=3.1.58
 pydantic>=2.0.0

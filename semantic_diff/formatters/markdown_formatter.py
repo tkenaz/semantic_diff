@@ -10,6 +10,29 @@ from pathlib import Path
 from semantic_diff.models import RiskLevel, SemanticAnalysis
 
 
+def escape_md(text: str) -> str:
+    """Escape markdown special characters and HTML to prevent injection"""
+    if not text:
+        return ""
+    # First escape HTML entities
+    text = html.escape(text, quote=True)
+    # Escape markdown special chars that could be used for injection
+    # but preserve basic formatting in LLM output
+    return re.sub(r"([<>])", r"\\\1", text)
+
+
+def escape_path(path: str) -> str:
+    """File names may carry *, _, [ or ` - keep them literal, not formatting"""
+    return re.sub(r"([\\`*_\[\]])", r"\\\1", escape_md(path))
+
+
+def escape_inline_code(text: str) -> str:
+    """Escape backticks in inline code content"""
+    if not text:
+        return ""
+    return text.replace("`", "\\`")
+
+
 class MarkdownFormatter:
     """Formats SemanticAnalysis as Markdown for file storage"""
 
@@ -24,37 +47,46 @@ class MarkdownFormatter:
         return self.RISK_ICONS.get(level, "•")
 
     def _escape_md(self, text: str) -> str:
-        """Escape markdown special characters and HTML to prevent injection"""
-        if not text:
-            return ""
-        # First escape HTML entities
-        text = html.escape(text, quote=True)
-        # Escape markdown special chars that could be used for injection
-        # but preserve basic formatting in LLM output
-        text = re.sub(r"([<>])", r"\\\1", text)
-        return text
+        return escape_md(text)
+
+    def _escape_path(self, path: str) -> str:
+        return escape_path(path)
 
     def _escape_inline_code(self, text: str) -> str:
-        """Escape backticks in inline code content"""
-        if not text:
-            return ""
-        return text.replace("`", "\\`")
+        return escape_inline_code(text)
 
     def format(self, analysis: SemanticAnalysis) -> str:
         """Generate markdown string from analysis"""
         lines = []
 
-        # Header - escape user-controlled content
-        lines.append(f"# Semantic Diff: {analysis.commit_hash[:8]}")
+        # Header - escape user-controlled content (title, authors, subjects)
+        cs = analysis.change_set
+        lines.append(f"# Semantic Diff: {cs.ref}")
         lines.append("")
-        lines.append(f"**Commit:** `{analysis.commit_hash}`")
-        lines.append(f"**Author:** {self._escape_md(analysis.author)}")
-        lines.append(f"**Date:** {analysis.date}")
+        if cs.kind == "merge_request":
+            lines.append(
+                f"**Merge request:** `{cs.ref}` (base `{cs.base_sha}` → head `{cs.head_sha}`)"
+            )
+            authors = ", ".join(self._escape_md(a) for a in cs.authors)
+            lines.append(f"**Authors:** {authors}")
+        else:
+            lines.append(f"**Commit:** `{cs.head_sha}`")
+            lines.append(f"**Author:** {self._escape_md(', '.join(cs.authors))}")
+        if cs.date:
+            lines.append(f"**Date:** {cs.date}")
         lines.append("")
-        # Escape commit message - could contain malicious markdown/HTML
-        escaped_msg = self._escape_md(analysis.commit_message)
-        lines.append(f"> {escaped_msg}")
+        lines.append(f"> {self._escape_md(cs.title)}")
         lines.append("")
+        if cs.kind == "merge_request":
+            lines.append(f"### Commits ({len(cs.commits)})")
+            lines.append("")
+            for c in cs.commits:
+                lines.append(
+                    f"- `{c.short_hash}` {self._escape_md(c.subject)} — {self._escape_md(c.author)}"
+                )
+            lines.append("")
+
+        lines += self._coverage_lines(analysis)
 
         # Files Changed
         lines.append("## 📁 Files Changed")
@@ -150,13 +182,31 @@ class MarkdownFormatter:
 
         return "\n".join(lines)
 
+    def _coverage_lines(self, analysis: SemanticAnalysis) -> list:
+        cov = analysis.diff_coverage
+        if cov is None:
+            return []
+        lines = [
+            f"**Diff coverage:** {cov.percent}% of changed lines "
+            f"(budget {cov.budget_tokens:,} tokens)"
+        ]
+        for label, paths in (
+            ("Trimmed to whole hunks", cov.trimmed),
+            ("Not shown (over budget)", cov.omitted),
+            ("Skipped (lock/generated/binary)", cov.noise),
+        ):
+            if paths:
+                lines.append(f"- {label}: {', '.join(self._escape_path(p) for p in paths)}")
+        return lines + [""]
+
     def save(self, analysis: SemanticAnalysis, output_dir: Path) -> Path:
         """Save analysis to markdown file in output_dir"""
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Filename: <short_hash>_<timestamp>.md
+        # Filename: [mr_]<short head>_<timestamp>.md
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{analysis.commit_hash[:8]}_{timestamp}.md"
+        prefix = "mr_" if analysis.change_set.kind == "merge_request" else ""
+        filename = f"{prefix}{analysis.change_set.head_sha[:8]}_{timestamp}.md"
         filepath = output_dir / filename
 
         content = self.format(analysis)

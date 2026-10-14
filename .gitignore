@@ -28,3 +28,4 @@ semantic_diff_reports/
 kenaz-out/
 .coverage
 coverage.json
+mutants/

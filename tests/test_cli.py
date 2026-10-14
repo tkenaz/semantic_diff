@@ -10,7 +10,7 @@ import pytest
 from click.testing import CliRunner
 from git import Repo
 
-from semantic_diff.cli import main
+from semantic_diff.cli import cli, main, route_args
 
 
 class TestCLIHelp:
@@ -80,7 +80,10 @@ class TestCLIWithMockedAnalyzer:
     @pytest.fixture
     def mock_llm_analyzer(self, mock_semantic_analysis):
         """Mock the LLM analyzer to return test data without API calls"""
-        with patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class:
+        with (
+            patch("semantic_diff.cli.build_provider"),
+            patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class,
+        ):
             mock_instance = MagicMock()
             mock_instance.analyze.return_value = mock_semantic_analysis
             mock_analyzer_class.return_value = mock_instance
@@ -104,7 +107,7 @@ class TestCLIWithMockedAnalyzer:
             pytest.fail(f"Output is not valid JSON: {e}\n{result.output}")
 
         # Check structure
-        assert "commit_hash" in data
+        assert data["change_set"]["kind"] == "commit"
         assert "intent" in data
         assert "risk_assessment" in data
         assert "files_changed" in data
@@ -121,8 +124,8 @@ class TestCLIWithMockedAnalyzer:
         data = json.loads(result.output)
 
         # Verify key fields match mock data
-        assert data["commit_message"] == mock_semantic_analysis.commit_message
-        assert data["author"] == mock_semantic_analysis.author
+        assert data["change_set"]["title"] == mock_semantic_analysis.change_set.title
+        assert data["change_set"]["authors"] == mock_semantic_analysis.change_set.authors
         assert data["intent"]["summary"] == mock_semantic_analysis.intent.summary
 
     def test_console_output_is_formatted(self, temp_git_repo, mock_llm_analyzer, capsys):
@@ -186,20 +189,21 @@ class TestCLIWithMockedAnalyzer:
         assert content.startswith("# Semantic Diff:")
         assert "## 🎯 Intent" in content
 
-    def test_model_flag_passes_to_analyzer(self, temp_git_repo):
-        """Test that --model flag is passed to the analyzer"""
+    def test_model_flag_passes_to_provider(self, temp_git_repo):
+        """Test that --model flag reaches the provider the analyzer is built with"""
         repo_path, repo, commit_hash = temp_git_repo
         runner = CliRunner()
 
-        with patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class:
-            mock_instance = MagicMock()
-            mock_analyzer_class.return_value = mock_instance
-
-            # This will fail because no API key, but we can check the call
+        with (
+            patch("semantic_diff.cli.build_provider") as build_provider,
+            patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class,
+        ):
             runner.invoke(main, ["analyze", "HEAD", "--repo", repo_path, "--model", "custom-model"])
 
-            # Verify LLMAnalyzer was instantiated with the model
-            mock_analyzer_class.assert_called_once_with(model="custom-model")
+            build_provider.assert_called_once_with(model="custom-model")
+            mock_analyzer_class.assert_called_once_with(
+                build_provider.return_value, max_diff_tokens=60_000, max_output_tokens=32_000
+            )
 
     def test_default_commit_is_head(self, temp_git_repo, mock_llm_analyzer):
         """Test that default commit is HEAD when not specified"""
@@ -211,8 +215,9 @@ class TestCLIWithMockedAnalyzer:
 
         assert result.exit_code == 0
         # Should analyze HEAD commit
-        data = json.loads(result.output)
-        assert "commit_hash" in data
+        assert json.loads(result.output)["change_set"]["kind"] == "commit"
+        change_set = mock_llm_analyzer.return_value.analyze.call_args.args[0]
+        assert change_set.head_sha == commit_hash
 
     def test_brief_flag_produces_compact_output(self, temp_git_repo, mock_llm_analyzer):
         """Test that --brief flag produces compact console output"""
@@ -264,9 +269,11 @@ class TestCLIEdgeCases:
             mock_parser = MagicMock()
             mock_parser.get_commit_info.return_value = {
                 "hash": "abc123",
+                "short_hash": "abc123",
                 "message": "Empty",
                 "author": "test@example.com",
                 "date": "2024-01-01",
+                "parents": [],
             }
             mock_parser.get_file_changes.return_value = []  # No changes
             mock_parser_class.return_value = mock_parser
@@ -277,17 +284,24 @@ class TestCLIEdgeCases:
             assert result.exit_code == 0
             assert "No changes found" in result.output
 
-    def test_current_directory_when_no_repo_specified(self):
-        """Test that CLI uses current directory when --repo not specified"""
+    def test_current_directory_when_no_repo_specified(
+        self, temp_git_repo, monkeypatch, mock_semantic_analysis
+    ):
+        """Test that CLI analyzes the repo in the current directory when --repo is omitted"""
+        repo_path, repo, commit_hash = temp_git_repo
+        monkeypatch.chdir(repo_path)
         runner = CliRunner()
 
-        # This will fail if current directory is not a git repo
-        # We're testing the error message contains the right info
-        result = runner.invoke(main, ["analyze", "HEAD"])
+        with (
+            patch("semantic_diff.cli.build_provider"),
+            patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class,
+        ):
+            mock_analyzer_class.return_value.analyze.return_value = mock_semantic_analysis
+            result = runner.invoke(main, ["analyze", "HEAD", "--json"])
 
-        # Either succeeds (if run in a git repo) or fails with repo error
-        if result.exit_code != 0:
-            assert "Error:" in result.output
+        assert result.exit_code == 0
+        change_set = mock_analyzer_class.return_value.analyze.call_args.args[0]
+        assert change_set.head_sha == commit_hash
 
     def test_verbose_shows_traceback_on_error(self, tmp_path):
         """Test that --verbose shows full traceback on errors"""
@@ -308,7 +322,10 @@ class TestCLIIntegration:
         """Test complete workflow: real git repo -> mocked analysis -> console output"""
         repo_path, repo, commit_hash = temp_git_repo
 
-        with patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class:
+        with (
+            patch("semantic_diff.cli.build_provider"),
+            patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class,
+        ):
             mock_instance = MagicMock()
             mock_instance.analyze.return_value = mock_semantic_analysis
             mock_analyzer_class.return_value = mock_instance
@@ -324,7 +341,10 @@ class TestCLIIntegration:
         """Test that short commit hashes work"""
         repo_path, repo, commit_hash = temp_git_repo
 
-        with patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class:
+        with (
+            patch("semantic_diff.cli.build_provider"),
+            patch("semantic_diff.cli.LLMAnalyzer") as mock_analyzer_class,
+        ):
             mock_instance = MagicMock()
             mock_instance.analyze.return_value = mock_semantic_analysis
             mock_analyzer_class.return_value = mock_instance
@@ -335,3 +355,37 @@ class TestCLIIntegration:
             result = runner.invoke(main, ["analyze", short_hash, "--repo", repo_path])
 
             assert result.exit_code == 0
+
+
+class TestEntryPointRouting:
+    """`semantic-diff` (the console script) routes bare commits/flags to `analyze`."""
+
+    @pytest.mark.parametrize(
+        "args, routed",
+        [
+            ([], ["analyze", "HEAD"]),
+            (["abc123"], ["analyze", "abc123"]),
+            (["abc123", "--json"], ["analyze", "abc123", "--json"]),
+            (["--json"], ["analyze", "HEAD", "--json"]),
+            (["--help"], ["--help"]),
+            (["-h"], ["-h"]),
+            (["analyze", "HEAD"], ["analyze", "HEAD"]),
+            (["init"], ["init"]),
+            (["mr", "--base", "origin/dev"], ["mr", "--base", "origin/dev"]),
+        ],
+    )
+    def test_routes_arguments(self, args, routed):
+        assert route_args(args) == routed
+
+    def test_every_registered_command_is_routed_as_itself(self):
+        for name in main.commands:
+            assert route_args([name]) == [name]
+
+    def test_console_script_runs_mr(self, mr_repo, monkeypatch, capsys):
+        monkeypatch.setattr("sys.argv", ["semantic-diff", "mr", "--repo", mr_repo["path"]])
+
+        with pytest.raises(SystemExit):
+            cli()
+
+        # reached `mr` itself (asks for --base), not `analyze mr` ("Could not find commit: mr")
+        assert "--base is required" in capsys.readouterr().err

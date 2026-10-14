@@ -5,6 +5,7 @@ Tests for formatters - console and markdown output
 from semantic_diff.formatters.console_formatter import ConsoleFormatter
 from semantic_diff.formatters.markdown_formatter import MarkdownFormatter
 from semantic_diff.models import (
+    DiffCoverage,
     FileChange,
     RiskLevel,
 )
@@ -27,8 +28,8 @@ class TestMarkdownFormatter:
         assert "## ❓ Review Questions" in output
 
         # Check commit info is present
-        assert mock_semantic_analysis.commit_hash[:8] in output
-        assert mock_semantic_analysis.author in output
+        assert mock_semantic_analysis.change_set.ref in output
+        assert mock_semantic_analysis.change_set.authors[0] in output
 
         # Check table structure for files
         assert "| File | Change | + | - | Lang |" in output
@@ -95,8 +96,8 @@ class TestMarkdownFormatter:
         formatter = MarkdownFormatter()
 
         # Create analysis with malicious commit message
-        malicious_analysis = mock_semantic_analysis.model_copy()
-        malicious_analysis.commit_message = "<script>alert('xss')</script> Fix bug"
+        malicious_analysis = mock_semantic_analysis.model_copy(deep=True)
+        malicious_analysis.change_set.title = "<script>alert('xss')</script> Fix bug"
 
         output = formatter.format(malicious_analysis)
 
@@ -146,7 +147,7 @@ class TestMarkdownFormatter:
         assert saved_path.is_file()
 
         # Check filename format: <short_hash>_<timestamp>.md
-        assert saved_path.name.startswith(mock_semantic_analysis.commit_hash[:8])
+        assert saved_path.name.startswith(mock_semantic_analysis.change_set.head_sha[:8] + "_")
         assert saved_path.name.endswith(".md")
 
     def test_save_file_contains_formatted_content(self, mock_semantic_analysis, tmp_path):
@@ -194,6 +195,68 @@ class TestMarkdownFormatter:
         assert formatter._risk_icon(RiskLevel.CRITICAL) == "🔥"
 
 
+class TestMarkdownFormatterMergeRequest:
+    def test_header_shows_range_title_and_authors(self, mock_mr_analysis):
+        output = MarkdownFormatter().format(mock_mr_analysis)
+
+        assert output.startswith("# Semantic Diff: 0123abcd..abc123de")
+        assert "**Merge request:** `0123abcd..abc123de`" in output
+        assert "**Authors:** Dev One &lt;d1@x&gt;, Dev Two &lt;d2@x&gt;" in output
+        assert "> AHUB-1 Add JWT authentication" in output
+        assert "**Commit:**" not in output
+
+    def test_lists_commits_oldest_first(self, mock_mr_analysis):
+        output = MarkdownFormatter().format(mock_mr_analysis)
+
+        first = output.index("`11111111` feat: add jwt")
+        second = output.index("`22222222` test: jwt expiry")
+        assert "### Commits (2)" in output
+        assert first < second
+
+    def test_commit_subjects_are_escaped(self, mock_mr_analysis):
+        analysis = mock_mr_analysis.model_copy(deep=True)
+        analysis.change_set.commits[0].subject = "<img src=x onerror=alert(1)>"
+
+        output = MarkdownFormatter().format(analysis)
+
+        assert "<img" not in output
+
+    def test_report_filename_is_prefixed(self, mock_mr_analysis, tmp_path):
+        saved = MarkdownFormatter().save(mock_mr_analysis, tmp_path)
+
+        assert saved.name.startswith("mr_abc123de_")
+
+    def test_commit_report_has_no_commit_list(self, mock_semantic_analysis):
+        output = MarkdownFormatter().format(mock_semantic_analysis)
+
+        assert "### Commits" not in output
+
+
+class TestConsoleFormatterMergeRequest:
+    def test_full_header_shows_range_and_commit_count(self, mock_mr_analysis, capsys):
+        ConsoleFormatter().format(mock_mr_analysis)
+
+        output = capsys.readouterr().out
+        assert "AHUB-1 Add JWT authentication" in output
+        assert "0123abcd..abc123de" in output
+        assert "2 commits" in output
+
+    def test_title_is_not_interpreted_as_rich_markup(self, mock_mr_analysis, capsys):
+        analysis = mock_mr_analysis.model_copy(deep=True)
+        analysis.change_set.title = "[red]Totally safe[/red]"
+
+        ConsoleFormatter().format(analysis)
+        ConsoleFormatter(brief=True).format(analysis)
+
+        assert capsys.readouterr().out.count("[red]Totally safe[/red]") == 2
+
+    def test_brief_header_shows_commit_count(self, mock_mr_analysis, capsys):
+        ConsoleFormatter(brief=True).format(mock_mr_analysis)
+
+        output = capsys.readouterr().out
+        assert "2 commits" in output
+
+
 class TestConsoleFormatter:
     """Test ConsoleFormatter terminal output"""
 
@@ -217,9 +280,9 @@ class TestConsoleFormatter:
         output = captured.out
 
         # Check commit info is present
-        assert mock_semantic_analysis.commit_message in output
-        assert mock_semantic_analysis.commit_hash[:8] in output
-        assert mock_semantic_analysis.author in output
+        assert mock_semantic_analysis.change_set.title in output
+        assert mock_semantic_analysis.change_set.ref in output
+        assert mock_semantic_analysis.change_set.authors[0] in output
 
     def test_format_includes_analysis_sections(self, mock_semantic_analysis, capsys):
         """Test that all major analysis sections are included"""
@@ -345,8 +408,8 @@ class TestConsoleFormatterBriefMode:
         output = capsys.readouterr().out
 
         # Should include commit info
-        assert mock_semantic_analysis.commit_hash[:8] in output
-        assert mock_semantic_analysis.commit_message in output
+        assert mock_semantic_analysis.change_set.ref in output
+        assert mock_semantic_analysis.change_set.title in output
 
         # Should include intent summary
         assert mock_semantic_analysis.intent.summary in output
@@ -413,8 +476,9 @@ class TestConsoleFormatterBriefMode:
         assert "Critical question must show?" in output
         assert "High priority question?" in output
 
-        # Should show "and X more" for hidden questions
-        assert "more" in output
+        # Should show "and X more" for hidden questions - styled, not raw markup
+        assert "more (use full mode to see all)" in output
+        assert "[dim]" not in output
 
     def test_brief_mode_shows_all_critical_high_even_if_many(self, mock_semantic_analysis, capsys):
         """Test that ALL critical/high questions are shown even if >3"""
@@ -450,3 +514,72 @@ class TestConsoleFormatterBriefMode:
         # Should not crash and should show basic info
         assert len(output) > 0
         assert "LOW" in output
+
+
+PARTIAL = DiffCoverage(
+    budget_tokens=60_000,
+    shown_lines=870,
+    total_lines=1000,
+    trimmed=["src/core.py"],
+    omitted=["src/big_*.py", "src/huge.py"],
+    noise=["pnpm-lock.yaml"],
+)
+
+
+class TestDiffCoverageInReports:
+    def test_markdown_states_coverage_and_every_gap(self, mock_mr_analysis):
+        analysis = mock_mr_analysis.model_copy(update={"diff_coverage": PARTIAL})
+
+        report = MarkdownFormatter().format(analysis)
+
+        assert "**Diff coverage:** 87% of changed lines (budget 60,000 tokens)" in report
+        assert "- Trimmed to whole hunks: src/core.py" in report
+        assert "- Not shown (over budget): src/big\\_\\*.py, src/huge.py" in report
+        assert "pnpm-lock.yaml\n\n## 📁 Files Changed" in report
+        assert "- Skipped (lock/generated/binary): pnpm-lock.yaml" in report
+
+    def test_markdown_full_coverage_has_no_gap_lines(self, mock_mr_analysis):
+        full = DiffCoverage(budget_tokens=60_000, shown_lines=5, total_lines=5)
+        analysis = mock_mr_analysis.model_copy(update={"diff_coverage": full})
+
+        report = MarkdownFormatter().format(analysis)
+
+        assert "**Diff coverage:** 100% of changed lines" in report
+        assert "Not shown" not in report
+        assert "Trimmed" not in report
+
+    def test_markdown_without_coverage_says_nothing_about_it(self, mock_mr_analysis):
+        assert "Diff coverage" not in MarkdownFormatter().format(mock_mr_analysis)
+
+    def test_console_shows_coverage_in_both_modes(self, mock_mr_analysis, capsys):
+        analysis = mock_mr_analysis.model_copy(update={"diff_coverage": PARTIAL})
+
+        ConsoleFormatter().format(analysis)
+        ConsoleFormatter(brief=True).format(analysis)
+
+        output = capsys.readouterr().out
+        assert output.count(" • diff 87%") == 2
+
+    def test_console_warns_when_files_were_not_seen(self, mock_mr_analysis, capsys):
+        analysis = mock_mr_analysis.model_copy(update={"diff_coverage": PARTIAL})
+
+        ConsoleFormatter().format(analysis)
+
+        output = " ".join(capsys.readouterr().out.split())
+        assert "2 files not shown to the model" in output
+        assert "src/big_*.py, src/huge.py" in output
+
+    def test_console_warning_singular(self, mock_mr_analysis, capsys):
+        one = PARTIAL.model_copy(update={"omitted": ["src/huge.py"]})
+        analysis = mock_mr_analysis.model_copy(update={"diff_coverage": one})
+
+        ConsoleFormatter().format(analysis)
+
+        assert "1 file not shown to the model" in capsys.readouterr().out
+
+    def test_console_without_coverage_omits_it(self, mock_mr_analysis, capsys):
+        ConsoleFormatter().format(mock_mr_analysis)
+
+        output = capsys.readouterr().out
+        assert "diff " not in output
+        assert "not shown" not in output

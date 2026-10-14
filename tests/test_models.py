@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 # Import the models directly
 from semantic_diff.models import (
+    ChangeSet,
     FileChange,
     Impact,
     ImpactMap,
@@ -101,10 +102,9 @@ def test_review_question():
 def test_semantic_analysis_full_model():
     """Test complete SemanticAnalysis with nested models"""
     analysis = SemanticAnalysis(
-        commit_hash="abc123",
-        commit_message="Add new feature",
-        author="John Doe",
-        date="2023-12-25",
+        change_set=ChangeSet(
+            kind="commit", ref="abc123", head_sha="abc123", title="Add new feature"
+        ),
         files_changed=[FileChange(path="main.py", change_type="added")],
         intent=Intent(
             summary="Implement core functionality",
@@ -135,3 +135,23 @@ def test_invalid_risk_level():
     """Test that invalid RiskLevel values are not allowed"""
     with pytest.raises(ValueError):
         RiskLevel("invalid_level")
+
+
+def test_json_carries_schema_version_first(mock_semantic_analysis):
+    """CI consumers check the schema before reading fields (v2 = change_set)"""
+    dumped = mock_semantic_analysis.model_dump()
+
+    assert next(iter(dumped)) == "schema_version"
+    assert dumped["schema_version"] == 2
+
+
+def test_package_version_matches_the_latest_changelog_release():
+    # No tomllib: the package still supports Python 3.10
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent
+    version = re.search(r'^version = "([^"]+)"', (root / "pyproject.toml").read_text(), re.M)
+    latest = re.search(r"^## \[(\d+\.\d+\.\d+)\]", (root / "CHANGELOG.md").read_text(), re.M)
+
+    assert version.group(1) == latest.group(1)
