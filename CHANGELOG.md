@@ -7,20 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- `semantic-diff review`: agentic merge request review. The model reads around
-  the change with read-only tools (`read_file`, `read_base`, `grep`,
-  `list_dir`, `git_log`) over git objects at head/base, and submits findings
-  tied to lines. Bounded by turns, cumulative input tokens and per-turn
-  context; a limit forces a final submission and is named in the report.
-- Every review finding is checked in code: the cited line exists (head or
-  base) and the file was actually seen by the model.
-- Review report as Markdown and JSON (`schema_version` 1), with turns, tool
-  calls, tokens (cache reads/writes) and files read.
-- Providers: tool-calling conversations (`converse`) with prompt caching on
-  the OpenAI-compatible adapter; retries cover them too.
-
-## [0.3.0] - 2026-10-13
+## [0.3.0] - 2026-10-14
 
 ### Changed (breaking)
 - JSON output: `commit_hash`, `commit_message`, `author`, `date` moved into a
@@ -52,12 +39,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Action: pull requests are analyzed as a whole (merge base..head)
   with the PR title and description as intent; one LLM call per run
   instead of two; the PR comment flags partial diff coverage
+- `semantic-diff review`: agentic merge request review. The model reads around
+  the change with read-only tools (`read_file`, `read_base`, `grep`,
+  `list_dir`, `git_log`) over git objects at head/base, and submits findings
+  tied to lines. Bounded by turns, cumulative input tokens and per-turn
+  context; a limit forces a final submission and is named in the report.
+- Every review finding is checked in code: the cited line exists (head or
+  base) and the file was actually seen by the model.
+- Review report as Markdown and JSON (`schema_version` 1), with turns, tool
+  calls, tokens (cache reads/writes) and files read.
+- Providers: tool-calling conversations (`converse`) with prompt caching on
+  the OpenAI-compatible adapter; retries cover them too.
 
 ### Security
 - `gitpython>=3.1.58`: earlier versions are affected by CVE-2026-42215,
   CVE-2026-44243 and later advisories (the suite passes on 3.1.0 through 3.2.0)
 
 ### Fixed
+- Long answers no longer fail as broken JSON: the output limit is 32,000
+  tokens (was 4096) and configurable (`--max-output-tokens` /
+  `SEMANTIC_DIFF_MAX_OUTPUT_TOKENS`); an answer cut off at the limit is
+  reported as such instead of `Unterminated string`
 - MR description cannot close its own untrusted fence in the prompt
 - `+`/`-` line counts for lines like `++i;` / `--x`
 - Initial commits: every added line is marked `+`
@@ -107,5 +109,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Retry logic for API calls
 - Pydantic models for structured analysis
 
+[Unreleased]: https://github.com/tkenaz/semantic_diff/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/tkenaz/semantic_diff/compare/v0.2.2...v0.3.0
+[0.2.2]: https://github.com/tkenaz/semantic_diff/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/tkenaz/semantic_diff/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/tkenaz/semantic_diff/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tkenaz/semantic_diff/releases/tag/v0.1.0

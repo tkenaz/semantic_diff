@@ -50,6 +50,7 @@ class OpenAICompatProvider:
             text=text,
             input_tokens=usage.prompt_tokens if usage else 0,
             output_tokens=usage.completion_tokens if usage else 0,
+            truncated=response.choices[0].finish_reason == "length",
         )
 
     def converse(

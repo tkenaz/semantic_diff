@@ -202,7 +202,7 @@ class TestCLIWithMockedAnalyzer:
 
             build_provider.assert_called_once_with(model="custom-model")
             mock_analyzer_class.assert_called_once_with(
-                build_provider.return_value, max_diff_tokens=60_000
+                build_provider.return_value, max_diff_tokens=60_000, max_output_tokens=32_000
             )
 
     def test_default_commit_is_head(self, temp_git_repo, mock_llm_analyzer):

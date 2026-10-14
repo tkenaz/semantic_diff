@@ -12,6 +12,9 @@ from semantic_diff.providers.base import LLMProvider
 from semantic_diff.providers.retrying import RetryingProvider
 
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5"
+# Long answers on big merge requests take minutes. An explicit timeout also lifts the
+# Anthropic SDK's refusal of large non-streaming max_tokens.
+CLIENT_TIMEOUT_SECONDS = 900.0
 
 
 def _require(name: str) -> str:
@@ -26,7 +29,9 @@ def _anthropic(model: Optional[str]) -> LLMProvider:
 
     from semantic_diff.providers.anthropic_provider import AnthropicProvider
 
-    client = anthropic.Anthropic(api_key=_require("ANTHROPIC_API_KEY"), max_retries=0)
+    client = anthropic.Anthropic(
+        api_key=_require("ANTHROPIC_API_KEY"), max_retries=0, timeout=CLIENT_TIMEOUT_SECONDS
+    )
     return AnthropicProvider(client=client, model=model or DEFAULT_ANTHROPIC_MODEL)
 
 
@@ -42,6 +47,7 @@ def _openai_compat(model: Optional[str]) -> LLMProvider:
         api_key=_require("SEMANTIC_DIFF_API_KEY"),
         base_url=_require("SEMANTIC_DIFF_BASE_URL"),
         max_retries=0,
+        timeout=CLIENT_TIMEOUT_SECONDS,
     )
     # No default model: model ids differ per gateway, a guess would just 404.
     if not model:

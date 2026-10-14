@@ -36,20 +36,24 @@ def _http(status: int, headers: dict | None = None) -> httpx.Response:
     return httpx.Response(status, headers=headers or {}, request=REQUEST)
 
 
-def _anthropic_message(*blocks, input_tokens=11, output_tokens=7) -> Message:
+def _anthropic_message(
+    *blocks, input_tokens=11, output_tokens=7, stop_reason="end_turn"
+) -> Message:
     return Message(
         id="msg_1",
         type="message",
         role="assistant",
         model="claude-test",
         content=list(blocks),
-        stop_reason="end_turn",
+        stop_reason=stop_reason,
         stop_sequence=None,
         usage=Usage(input_tokens=input_tokens, output_tokens=output_tokens),
     )
 
 
-def _chat_completion(content, prompt_tokens=13, completion_tokens=5) -> ChatCompletion:
+def _chat_completion(
+    content, prompt_tokens=13, completion_tokens=5, finish_reason="stop"
+) -> ChatCompletion:
     return ChatCompletion(
         id="chatcmpl-1",
         object="chat.completion",
@@ -58,7 +62,7 @@ def _chat_completion(content, prompt_tokens=13, completion_tokens=5) -> ChatComp
         choices=[
             Choice(
                 index=0,
-                finish_reason="stop",
+                finish_reason=finish_reason,
                 message=ChatCompletionMessage(role="assistant", content=content),
             )
         ],
@@ -195,6 +199,38 @@ class TestOpenAICompatProvider:
         result = OpenAICompatProvider(client=client, model="m").complete("p", max_tokens=1)
 
         assert (result.input_tokens, result.output_tokens) == (0, 0)
+
+
+class TestTruncation:
+    def test_anthropic_max_tokens_stop_is_truncated(self):
+        client = Mock()
+        client.messages.create.return_value = _anthropic_message(
+            TextBlock(type="text", text='{"a'), stop_reason="max_tokens"
+        )
+
+        assert AnthropicProvider(client=client, model="m").complete("p", max_tokens=1).truncated
+
+    def test_anthropic_end_turn_is_not_truncated(self):
+        client = Mock()
+        client.messages.create.return_value = _anthropic_message(TextBlock(type="text", text="x"))
+
+        assert not AnthropicProvider(client=client, model="m").complete("p", max_tokens=1).truncated
+
+    def test_openai_length_finish_is_truncated(self):
+        client = Mock()
+        client.chat.completions.create.return_value = _chat_completion(
+            '{"a', finish_reason="length"
+        )
+
+        assert OpenAICompatProvider(client=client, model="m").complete("p", max_tokens=1).truncated
+
+    def test_openai_stop_finish_is_not_truncated(self):
+        client = Mock()
+        client.chat.completions.create.return_value = _chat_completion("x")
+
+        assert (
+            not OpenAICompatProvider(client=client, model="m").complete("p", max_tokens=1).truncated
+        )
 
 
 @pytest.mark.parametrize("vendor", ["anthropic", "openai"])
@@ -437,6 +473,35 @@ class TestBuildProvider:
         assert isinstance(provider, RetryingProvider)
         assert isinstance(provider.inner, AnthropicProvider)
         assert provider.model == "claude-sonnet-5-5"
+
+    def test_sdk_clients_get_an_explicit_timeout_for_long_answers(self, monkeypatch):
+        # Anthropic's SDK refuses large non-streaming max_tokens unless a timeout is set
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        monkeypatch.setenv("SEMANTIC_DIFF_API_KEY", "k")
+        monkeypatch.setenv("SEMANTIC_DIFF_BASE_URL", "https://llm.example/v1")
+        monkeypatch.setenv("SEMANTIC_DIFF_MODEL", "m")
+
+        monkeypatch.setenv("SEMANTIC_DIFF_PROVIDER", "anthropic")
+        assert build_provider().inner.client.timeout == 900.0
+        monkeypatch.setenv("SEMANTIC_DIFF_PROVIDER", "openai")
+        assert build_provider().inner.client.timeout == 900.0
+
+    def test_large_output_limit_passes_the_anthropic_sdk_guard(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        provider = build_provider()
+        sent = {}
+
+        def capture(request, **kwargs):
+            sent["max_tokens"] = __import__("json").loads(request.content)["max_tokens"]
+            raise httpx.ConnectError("offline", request=request)
+
+        provider.inner.client._client.send = capture
+        provider.max_retries = 1
+
+        with pytest.raises(ProviderError):
+            provider.complete("p", max_tokens=64_000)
+
+        assert sent["max_tokens"] == 64_000
 
     def test_sdk_clients_do_not_retry_on_their_own(self):
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "k"}, clear=True):

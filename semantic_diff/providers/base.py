@@ -16,6 +16,7 @@ class Completion:
     text: str
     input_tokens: int
     output_tokens: int
+    truncated: bool = False  # the model stopped at max_tokens, mid-answer
 
 
 class ProviderError(Exception):

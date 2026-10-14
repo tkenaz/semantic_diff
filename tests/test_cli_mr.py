@@ -319,3 +319,35 @@ class TestMaxDiffTokens:
 
         assert result.exit_code == 2
         assert "0 is not in the range" in result.stderr
+
+
+class TestMaxOutputTokens:
+    def _invoke(self, mr_repo, *extra, env=None):
+        with (
+            patch("semantic_diff.cli.build_provider"),
+            patch("semantic_diff.cli.LLMAnalyzer") as analyzer_class,
+        ):
+            result = CliRunner().invoke(
+                main,
+                ["mr", "--base", "target", "--head", "feature", "--repo", mr_repo["path"], *extra],
+                env=env,
+            )
+        return result, analyzer_class
+
+    def test_defaults_to_thirty_two_thousand(self, mr_repo):
+        _, analyzer_class = self._invoke(mr_repo)
+
+        assert analyzer_class.call_args.kwargs["max_output_tokens"] == 32_000
+
+    def test_flag_and_env(self, mr_repo):
+        _, by_flag = self._invoke(mr_repo, "--max-output-tokens", "64000")
+        _, by_env = self._invoke(mr_repo, env={"SEMANTIC_DIFF_MAX_OUTPUT_TOKENS": "48000"})
+
+        assert by_flag.call_args.kwargs["max_output_tokens"] == 64_000
+        assert by_env.call_args.kwargs["max_output_tokens"] == 48_000
+
+    def test_non_positive_is_a_usage_error(self, mr_repo):
+        result, _ = self._invoke(mr_repo, "--max-output-tokens", "0")
+
+        assert result.exit_code == 2
+        assert "0 is not in the range" in result.output

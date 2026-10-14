@@ -373,7 +373,7 @@ class TestAnalyze:
         analyzer.analyze(commit_info, files, {})
 
         (call,) = analyzer.provider.calls
-        assert call["max_tokens"] == 4096
+        assert call["max_tokens"] == 32_000
         assert "Tighten auth" in call["prompt"]
         assert "+strict = True" in call["prompt"]
 
@@ -507,3 +507,43 @@ class TestDescriptionFenceCannotBeClosedFromInside:
 
         assert "x" * 4000 + "\n</untrusted_description>" in prompt
         assert "[description truncated]" not in prompt
+
+
+class TestOutputLimit:
+    """A big MR needs a long answer: the limit is generous, and a cut-off answer says so."""
+
+    CHANGE = ChangeSet(kind="commit", ref="abc", head_sha="abc", title="t")
+
+    def test_output_limit_is_configurable(self):
+        provider = ScriptedProvider()
+
+        LLMAnalyzer(provider, max_output_tokens=50_000).analyze(self.CHANGE, [], {})
+
+        assert provider.calls[0]["max_tokens"] == 50_000
+
+    def test_output_limit_must_be_positive(self):
+        with pytest.raises(ValueError, match="Output limit must be at least 1 token, got 0"):
+            LLMAnalyzer(ScriptedProvider(), max_output_tokens=0)
+
+    def test_one_token_output_limit_is_allowed(self):
+        assert LLMAnalyzer(ScriptedProvider(), max_output_tokens=1).max_output_tokens == 1
+
+    def test_answer_cut_off_by_the_output_limit_is_named_as_such(self):
+        cut = Completion(
+            text='{"intent": {"summary": "cut', input_tokens=1, output_tokens=9, truncated=True
+        )
+
+        with pytest.raises(ValueError) as exc:
+            LLMAnalyzer(ScriptedProvider(cut), max_output_tokens=9).analyze(self.CHANGE, [], {})
+
+        assert str(exc.value) == (
+            "The model's answer was cut off at the output limit (9 tokens) before it was "
+            "complete. Raise --max-output-tokens / SEMANTIC_DIFF_MAX_OUTPUT_TOKENS."
+        )
+
+    def test_complete_answer_is_parsed_as_before(self):
+        whole = Completion(text='{"intent": {"summary": "ok"}}', input_tokens=1, output_tokens=9)
+
+        result = LLMAnalyzer(ScriptedProvider(whole)).analyze(self.CHANGE, [], {})
+
+        assert result.intent.summary == "ok"

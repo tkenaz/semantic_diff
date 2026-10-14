@@ -92,6 +92,7 @@ def no_real_llm_credentials(monkeypatch):
         "SEMANTIC_DIFF_API_KEY",
         "SEMANTIC_DIFF_BASE_URL",
         "SEMANTIC_DIFF_MAX_DIFF_TOKENS",
+        "SEMANTIC_DIFF_MAX_OUTPUT_TOKENS",
         "SEMANTIC_DIFF_REVIEW_DIFF_TOKENS",
         "SEMANTIC_DIFF_MAX_TURNS",
         "SEMANTIC_DIFF_MAX_INPUT_TOKENS",

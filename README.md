@@ -204,6 +204,7 @@ semantic-diff review --gitlab-env --json   # inside a GitLab MR pipeline
 | `semantic-diff mr --base origin/main` | Analyze a whole merge request (merge-base..HEAD) |
 | `semantic-diff mr --gitlab-env` | Same, inside a GitLab MR pipeline (reads `CI_MERGE_REQUEST_*`) |
 | `--max-diff-tokens N` | Diff budget for the prompt (default 60000) |
+| `--max-output-tokens N` | Room for the model's answer (default 32000; env `SEMANTIC_DIFF_MAX_OUTPUT_TOKENS`) |
 | `semantic-diff review --base origin/main` | Agentic review of a merge request (see above) |
 | `semantic-diff init` | Install pre-push hook |
 | `semantic-diff uninstall` | Remove pre-push hook |

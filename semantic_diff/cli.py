@@ -14,7 +14,7 @@ import click
 from rich.console import Console
 from rich.markdown import Markdown
 
-from semantic_diff.analyzers.llm_analyzer import LLMAnalyzer
+from semantic_diff.analyzers.llm_analyzer import DEFAULT_OUTPUT_TOKENS, LLMAnalyzer
 from semantic_diff.change_set import from_commit, from_range
 from semantic_diff.diff_pack import DEFAULT_BUDGET_TOKENS
 from semantic_diff.formatters.console_formatter import ConsoleFormatter
@@ -97,6 +97,14 @@ def _output_options(command):
             show_default=True,
             envvar="SEMANTIC_DIFF_MAX_DIFF_TOKENS",
             help="Token budget for diffs in the prompt; the report states coverage",
+        ),
+        click.option(
+            "--max-output-tokens",
+            type=click.IntRange(min=1),
+            default=DEFAULT_OUTPUT_TOKENS,
+            show_default=True,
+            envvar="SEMANTIC_DIFF_MAX_OUTPUT_TOKENS",
+            help="Ceiling for the model's answer; only tokens actually written are billed",
         ),
     ]
     for option in reversed(options):
@@ -297,6 +305,7 @@ def _run(
     brief: bool,
     verbose: bool,
     max_diff_tokens: int,
+    max_output_tokens: int,
 ):
     """Shared pipeline: collect the change set, analyze it, render/save the result."""
     # Mutual exclusion: --brief and --verbose don't make sense together
@@ -323,7 +332,11 @@ def _run(
         if verbose:
             click.echo("Calling LLM for analysis...", err=True)
 
-        analyzer = LLMAnalyzer(build_provider(model=model), max_diff_tokens=max_diff_tokens)
+        analyzer = LLMAnalyzer(
+            build_provider(model=model),
+            max_diff_tokens=max_diff_tokens,
+            max_output_tokens=max_output_tokens,
+        )
         analysis = analyzer.analyze(change_set, files, project_context)
 
         if output_json:
