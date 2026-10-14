@@ -6,6 +6,7 @@ The provider is scripted; the toolbox is real, over a real git repository.
 
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import List
 
 import pytest
@@ -20,9 +21,10 @@ from semantic_diff.providers import (
     Turn,
     UserMessage,
 )
-from semantic_diff.review.agent import SUBMIT_REVIEW, ReviewAgent, ReviewLimits
+from semantic_diff.review.agent import SUBMIT_REVIEW, ReviewAgent, ReviewLimits, citation_for
 from semantic_diff.review.report import Finding, ReviewStats
 from semantic_diff.review.tools import Toolbox
+from tests.conftest import _commit
 
 NOW = datetime(2026, 10, 14, 12, 0, 0)
 
@@ -141,6 +143,8 @@ class TestSubmit:
                 title="Callers expect 1",
                 explanation="util.py compares get() with 1, so the check now always fails.",
                 suggestion="Update the caller or keep the value.",
+                citation="head",
+                seen=True,
             )
         ]
         assert report.change_set == change["change_set"]
@@ -205,6 +209,17 @@ class TestSubmit:
             "summary: String should have at least 1 character; "
             "verdict: Input should be 'approve', 'comment' or 'request_changes'"
         )
+
+    def test_the_model_cannot_vouch_for_its_own_citations(self, change):
+        forged = dict(VALID_SUBMISSION["findings"][0], citation="head", seen=True)
+        provider = ScriptedProvider(uses(submit(findings=[forged])), uses(submit()))
+
+        _review(change, provider)
+
+        [result] = _results(provider.requests[1])
+        assert result.is_error
+        assert "findings.0.citation:" in result.content
+        assert "findings.0.seen:" in result.content
 
     def test_unknown_submission_fields_are_rejected(self, change):
         provider = ScriptedProvider(uses(submit(risk="high")), uses(submit()))
@@ -480,3 +495,121 @@ class TestLimits:
             max_output_tokens=8_000,
             diff_budget_tokens=30_000,
         )
+
+
+def _finding(file, line, **override):
+    return {**VALID_SUBMISSION["findings"][0], "file": file, "line": line, **override}
+
+
+class TestCitations:
+    def test_each_finding_is_checked_against_the_repository(self, change):
+        provider = ScriptedProvider(
+            uses(
+                submit(
+                    findings=[
+                        _finding("api.py", 2),
+                        _finding("api.py", 3),
+                        _finding("ghost.py", 1),
+                        _finding("./api.py", 1),
+                    ]
+                )
+            )
+        )
+
+        report = _review(change, provider)
+
+        assert [f.citation for f in report.findings] == [
+            "head",
+            "no_such_line",
+            "no_such_file",
+            "head",
+        ]
+
+    def test_seen_means_in_the_shown_diff_or_read_with_a_tool(self, change):
+        provider = ScriptedProvider(
+            uses(call("read_file", {"path": "util.py"})),
+            uses(
+                submit(
+                    findings=[
+                        _finding("api.py", 1),
+                        _finding("util.py", 1),
+                        _finding("models.py", 1),
+                    ]
+                )
+            ),
+        )
+
+        report = _review(change, provider)
+
+        assert [f.seen for f in report.findings] == [True, True, False]
+
+    def test_a_line_that_only_existed_before_the_change_cites_base(self, change, mr_repo):
+        head = _commit(
+            mr_repo["repo"], Path(mr_repo["path"]), {}, "drop models", remove=["models.py"]
+        )
+        change["toolbox"] = Toolbox(mr_repo["repo"], head=head.hexsha, base=mr_repo["base"].hexsha)
+        provider = ScriptedProvider(uses(submit(findings=[_finding("models.py", 9)])))
+
+        report = _review(change, provider)
+
+        assert report.findings[0].citation == "base"
+
+    def test_a_renamed_file_is_seen_under_its_new_path(self, change):
+        change["files"] = [change["files"][0].model_copy(update={"path": "old_api.py -> api.py"})]
+        provider = ScriptedProvider(uses(submit(findings=[_finding("api.py", 1)])))
+
+        report = _review(change, provider)
+
+        assert report.findings[0].seen is True
+
+    def test_a_path_with_spaces_is_seen_whole(self, change):
+        change["files"] = [change["files"][0].model_copy(update={"path": "docs/my api.py"})]
+        provider = ScriptedProvider(uses(submit(findings=[_finding("docs/my api.py", 1)])))
+
+        report = _review(change, provider)
+
+        assert report.findings[0].seen is True
+
+    def test_a_dot_slash_path_matches_the_seen_file(self, change):
+        provider = ScriptedProvider(uses(submit(findings=[_finding("./api.py", 1)])))
+
+        report = _review(change, provider)
+
+        assert report.findings[0].seen is True
+
+    def test_a_file_cut_from_the_diff_is_not_seen(self, change):
+        provider = ScriptedProvider(uses(submit(findings=[_finding("api.py", 1)])))
+
+        report = _review(change, provider, diff_budget_tokens=5)
+
+        assert report.findings[0].seen is False
+
+    def test_a_grep_hit_does_not_count_as_seeing_the_file(self, change):
+        provider = ScriptedProvider(
+            uses(call("grep", {"pattern": "FIELD_1"})),
+            uses(submit(findings=[_finding("models.py", 2)])),
+        )
+
+        report = _review(change, provider)
+
+        assert report.findings[0].seen is False
+
+
+class TestCitationFor:
+    @pytest.mark.parametrize(
+        "line, head_lines, base_lines, citation",
+        [
+            (1, 10, None, "head"),
+            (10, 10, 3, "head"),
+            (11, 10, 20, "base"),
+            (20, 10, 20, "base"),
+            (21, 10, 20, "no_such_line"),
+            (5, None, 9, "base"),
+            (10, None, 9, "no_such_line"),
+            (11, 10, None, "no_such_line"),
+            (1, 0, None, "no_such_line"),
+            (1, None, None, "no_such_file"),
+        ],
+    )
+    def test_where_the_cited_line_exists(self, line, head_lines, base_lines, citation):
+        assert citation_for(line, head_lines, base_lines) == citation

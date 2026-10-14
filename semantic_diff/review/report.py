@@ -11,15 +11,28 @@ from semantic_diff.models import ChangeSet, DiffCoverage, RiskLevel
 
 Verdict = Literal["approve", "comment", "request_changes"]
 Limit = Literal["turns", "tokens", "context"]
+# Where the cited line exists: after the change, only before it, or nowhere
+Citation = Literal["head", "base", "no_such_line", "no_such_file"]
 
 
-class Finding(BaseModel):
+class SubmittedFinding(BaseModel):
+    """A finding as the model must send it - it cannot add its own checks"""
+
+    model_config = {"extra": "forbid"}
+
     file: str = Field(min_length=1)
     line: int = Field(ge=1)
     severity: RiskLevel
     title: str = Field(min_length=1)
     explanation: str = Field(min_length=1)
     suggestion: Optional[str] = None
+
+
+class Finding(SubmittedFinding):
+    """A finding as reported, with the checks done on it"""
+
+    citation: Citation
+    seen: bool  # the file was in the shown diff or read with a tool
 
 
 class SubmittedReview(BaseModel):
@@ -29,7 +42,7 @@ class SubmittedReview(BaseModel):
 
     summary: str = Field(min_length=1)
     verdict: Verdict
-    findings: List[Finding] = Field(default_factory=list)
+    findings: List[SubmittedFinding] = Field(default_factory=list)
 
 
 class ReviewStats(BaseModel):

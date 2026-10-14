@@ -9,7 +9,7 @@ per call; a cap always says how to get the rest.
 
 import inspect
 from pathlib import PurePosixPath
-from typing import Any, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from git import GitCommandError, Repo
 
@@ -199,6 +199,23 @@ class Toolbox:
 
     # --- helpers -------------------------------------------------------------
 
+    def line_count(self, side: str, path: str) -> Optional[int]:
+        """Lines of a text file at "head" or "base"; None when there is no such text file"""
+        sha = {"head": self.head, "base": self.base}[side]
+        try:
+            return len(self._text_lines(side, sha, _clean_path(path)))
+        except ToolError:
+            return None
+
+    def _text_lines(self, side: str, sha: str, path: str) -> List[str]:
+        blob = self._object(side, sha, path)
+        if blob.type == "tree":
+            raise ToolError(f"{path} is a directory; use list_dir")
+        data = blob.data_stream.read()
+        if b"\0" in data[:8000]:
+            raise ToolError(f"{path} is a binary file")
+        return data.decode("utf-8", errors="replace").splitlines()
+
     def _object(self, side: str, sha: str, path: str):
         tree = self.repo.commit(sha).tree
         if not path:
@@ -224,13 +241,7 @@ class Toolbox:
         if end is not None and end < start:
             raise ToolError("end_line must not be before start_line")
 
-        blob = self._object(side, sha, path)
-        if blob.type == "tree":
-            raise ToolError(f"{path} is a directory; use list_dir")
-        data = blob.data_stream.read()
-        if b"\0" in data[:8000]:
-            raise ToolError(f"{path} is a binary file")
-        lines = data.decode("utf-8", errors="replace").splitlines()
+        lines = self._text_lines(side, sha, path)
         total = len(lines)
         if total == 0:
             return f"{path} ({side}) is empty"

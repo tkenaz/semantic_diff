@@ -14,7 +14,7 @@ from typing import Callable, List, Optional
 
 from pydantic import ValidationError
 
-from semantic_diff.diff_pack import pack
+from semantic_diff.diff_pack import DiffPack, pack
 from semantic_diff.models import ChangeSet, FileChange
 from semantic_diff.prompt_parts import format_change_set, format_diffs, format_files_summary
 from semantic_diff.providers import (
@@ -27,7 +27,14 @@ from semantic_diff.providers import (
     Turn,
     UserMessage,
 )
-from semantic_diff.review.report import Limit, ReviewReport, ReviewStats, SubmittedReview
+from semantic_diff.review.report import (
+    Citation,
+    Finding,
+    Limit,
+    ReviewReport,
+    ReviewStats,
+    SubmittedReview,
+)
 from semantic_diff.review.tools import Toolbox
 
 SEVERITIES = ["low", "medium", "high", "critical"]
@@ -200,7 +207,7 @@ class ReviewAgent:
         stats.tool_calls += 1
         result = self.toolbox.run(call)
         if not result.is_error and call.name in ("read_file", "read_base"):
-            path = str(call.arguments["path"]).strip().removeprefix("./")
+            path = _normalize(str(call.arguments["path"]))
             if path not in stats.files_read:
                 stats.files_read.append(path)
         return result
@@ -208,7 +215,7 @@ class ReviewAgent:
     def _report(
         self,
         change_set: ChangeSet,
-        packed,
+        packed: DiffPack,
         stats: ReviewStats,
         submitted: Optional[SubmittedReview],
         last_text: str,
@@ -217,12 +224,44 @@ class ReviewAgent:
             change_set=change_set,
             verdict=submitted.verdict if submitted else None,
             summary=submitted.summary if submitted else (last_text or NOT_SUBMITTED),
-            findings=submitted.findings if submitted else [],
+            findings=self._checked(submitted, packed, stats),
             stats=stats,
             diff_coverage=packed.coverage,
             review_model=self.provider.model,
             review_timestamp=self._now().isoformat(),
         )
+
+    def _checked(
+        self, submitted: Optional[SubmittedReview], packed: DiffPack, stats: ReviewStats
+    ) -> List[Finding]:
+        if submitted is None:
+            return []
+        # A rename is shown under "old -> new"; the file is seen under its new path
+        seen = {s.file.path.split(" -> ")[-1] for s in packed.shown} | set(stats.files_read)
+        checked = []
+        for finding in submitted.findings:
+            path = _normalize(finding.file)
+            citation = citation_for(
+                finding.line,
+                self.toolbox.line_count("head", path),
+                self.toolbox.line_count("base", path),
+            )
+            checked.append(Finding(**finding.model_dump(), citation=citation, seen=path in seen))
+        return checked
+
+
+def citation_for(line: int, head_lines: Optional[int], base_lines: Optional[int]) -> Citation:
+    if head_lines is None and base_lines is None:
+        return "no_such_file"
+    if head_lines is not None and line <= head_lines:
+        return "head"
+    if base_lines is not None and line <= base_lines:
+        return "base"
+    return "no_such_line"
+
+
+def _normalize(path: str) -> str:
+    return path.strip().removeprefix("./")
 
 
 def _count(stats: ReviewStats, turn: Turn) -> None:

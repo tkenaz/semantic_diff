@@ -441,3 +441,35 @@ class TestSpecs:
             "list_dir": [],
             "git_log": ["path"],
         }
+
+
+class TestLineCount:
+    def test_counts_lines_on_each_side(self, repo):
+        tools = _tools(repo)
+
+        assert tools.line_count("head", "src/app.py") == 10
+        assert tools.line_count("base", "src/gone.py") == 1
+
+    @pytest.mark.parametrize(
+        "side, path",
+        [
+            ("head", "src/gone.py"),
+            ("base", "src/new.py"),
+            ("head", "src"),
+            ("head", "logo.png"),
+            ("head", "../x"),
+            ("head", ""),
+        ],
+    )
+    def test_no_count_when_there_is_no_text_file(self, repo, side, path):
+        assert _tools(repo).line_count(side, path) is None
+
+    def test_empty_file_has_zero_lines(self, repo, tmp_path):
+        head = _commit(repo["repo"], tmp_path, {"empty.py": ""}, "empty")
+        tools = Toolbox(repo["repo"], head=head.hexsha, base=repo["base"])
+
+        assert tools.line_count("head", "empty.py") == 0
+
+    def test_side_must_be_head_or_base(self, repo):
+        with pytest.raises(KeyError):
+            _tools(repo).line_count("HEAD", "src/app.py")
