@@ -7,15 +7,20 @@ import logging
 import os
 import random
 import time
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence, TypeVar
 
 from semantic_diff.providers.base import (
     Completion,
     LLMProvider,
+    Message,
     ProviderError,
     RateLimitError,
+    ToolSpec,
     TransientError,
+    Turn,
 )
+
+T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
@@ -54,12 +59,27 @@ class RetryingProvider:
         return self.inner.model
 
     def complete(self, prompt: str, *, max_tokens: int) -> Completion:
+        return self._with_retries(lambda: self.inner.complete(prompt, max_tokens=max_tokens))
+
+    def converse(
+        self,
+        system: str,
+        messages: Sequence[Message],
+        tools: Sequence[ToolSpec],
+        *,
+        max_tokens: int,
+    ) -> Turn:
+        return self._with_retries(
+            lambda: self.inner.converse(system, messages, tools, max_tokens=max_tokens)
+        )
+
+    def _with_retries(self, call: Callable[[], T]) -> T:
         waited = 0.0
         last_error: Optional[TransientError] = None
 
         for attempt in range(self.max_retries):
             try:
-                return self.inner.complete(prompt, max_tokens=max_tokens)
+                return call()
             except TransientError as e:
                 last_error = e
                 if attempt == self.max_retries - 1:

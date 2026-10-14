@@ -4,11 +4,20 @@ LLM providers: a port (LLMProvider), vendor adapters, retries and the factory.
 
 from semantic_diff.providers.anthropic_provider import AnthropicProvider
 from semantic_diff.providers.base import (
+    AssistantMessage,
     Completion,
     LLMProvider,
+    Message,
     ProviderError,
     RateLimitError,
+    StopReason,
+    ToolCall,
+    ToolCallingProvider,
+    ToolResult,
+    ToolSpec,
     TransientError,
+    Turn,
+    UserMessage,
 )
 from semantic_diff.providers.factory import PROVIDERS, build_provider
 from semantic_diff.providers.retrying import RetryingProvider
@@ -18,12 +27,21 @@ from semantic_diff.providers.retrying import RetryingProvider
 __all__ = [
     "PROVIDERS",
     "AnthropicProvider",
+    "AssistantMessage",
     "Completion",
     "LLMProvider",
+    "Message",
     "ProviderError",
     "RateLimitError",
     "RetryingProvider",
+    "StopReason",
+    "ToolCall",
+    "ToolCallingProvider",
+    "ToolResult",
+    "ToolSpec",
     "TransientError",
+    "Turn",
+    "UserMessage",
     "build_provider",
 ]
 
