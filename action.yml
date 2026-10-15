@@ -56,8 +56,8 @@ runs:
       shell: bash
       env:
         # Install the CLI from the same repo+ref the action itself runs at,
-        # so action.yml and the CLI can never drift apart (PyPI lags: it
-        # carries 0.1.0, whose CLI lacks --save — the v0.2.0 CI breakage).
+        # so action.yml and the CLI can never drift apart (PyPI can lag the
+        # tag: in v0.2.0 it still carried 0.1.0, whose CLI lacked --save).
         ACTION_REPO: ${{ github.action_repository }}
         ACTION_REF: ${{ github.action_ref }}
       run: |

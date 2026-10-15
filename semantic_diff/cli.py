@@ -57,7 +57,7 @@ exit 0
 @click.group()
 def main():
     """
-    AI-powered semantic analysis of git commits.
+    AI-powered semantic analysis of git commits and merge requests.
 
     \b
     Commands:
