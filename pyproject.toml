@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
-    {name = "Kenaz GmbH", email = "hello@kenaz.ai"}
+    {name = "37lab OÜ", email = "mv@37lab.ai"}
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",

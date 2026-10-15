@@ -1,6 +1,6 @@
 name: 'Semantic Diff'
 description: 'AI-powered semantic analysis of pull requests and commits. Understand intent, assess risk, get review questions.'
-author: 'Kenaz GmbH'
+author: '37lab OÜ'
 
 branding:
   icon: 'git-commit'
