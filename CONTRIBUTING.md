@@ -6,8 +6,8 @@ Thanks for your interest in contributing!
 
 ```bash
 # Clone
-git clone https://github.com/kenaz-gmbh/semantic-diff.git
-cd semantic-diff
+git clone https://github.com/tkenaz/semantic_diff.git
+cd semantic_diff
 
 # Setup
 python -m venv .venv
@@ -102,4 +102,4 @@ Open an issue or discussion. We're friendly.
 
 ---
 
-*Built with love by Kenaz GmbH*
+*Built with love by 37lab*

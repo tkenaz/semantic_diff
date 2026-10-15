@@ -281,12 +281,12 @@ pytest
 ## Support
 
 - **Bug reports & features**: [GitHub Issues](https://github.com/tkenaz/semantic_diff/issues)
-- **Custom integrations or enterprise**: [hello@kenaz.ai](mailto:hello@kenaz.ai)
+- **Custom integrations or enterprise**: [mv@37lab.ai](mailto:mv@37lab.ai)
 
 ## License
 
-MIT — [Kenaz GmbH](https://kenaz.ai)
+MIT — [37lab](https://37lab.ai)
 
 ---
 
-*Built with 🖤 by [Kenaz GmbH](https://kenaz.ai) — AI tools for developers*
+*Built with 🖤 by [37lab](https://37lab.ai) — AI tools for developers*
