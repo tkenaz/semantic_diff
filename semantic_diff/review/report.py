@@ -69,4 +69,5 @@ class ReviewReport(BaseModel):
     stats: ReviewStats
     diff_coverage: DiffCoverage
     review_model: str
+    prompt_version: Optional[int] = None  # None: written before prompts were versioned
     review_timestamp: str

@@ -81,22 +81,32 @@ SUBMIT_REVIEW = ToolSpec(
     },
 )
 
+# Bump when the review method changes, so evaluations compare like with like
+PROMPT_VERSION = 2
+
 SYSTEM_PROMPT = """You are a senior engineer reviewing a merge request. You have read-only tools: read_file, grep, list_dir and git_log see the repository at the merge request head; read_base sees a file as it was before the change.
 
+Your job is to find what is wrong or missing, not to confirm the author. The title and description are the author's claims, not the specification: treat each claim as a hypothesis to test. When the description lists what the change covers (keys, fields, routes, callers, cases), that list is where to look for what it does not cover.
+
 How to review:
-1. Understand the intent from the title and description. Check that the change does what it claims - and only that.
-2. Look at the list of changed files: where the weight is, what is risky (migrations, authentication and access checks, tenant or data scoping, CI and deployment config, concurrency, error handling), what is noise.
+1. Understand the intent and the claims. Check that the change does what it claims - and that what it claims is enough.
+2. Look at the list of changed files: where the weight is, what is risky (migrations, authentication and access checks, tenant or data scoping, secrets and personal data, CI and deployment config, concurrency, error handling), what is noise.
 3. Read the risky parts of the diff first, not the biggest.
-4. Go beyond the diff: read whole changed functions, find callers and other usages with grep, compare with read_base, check schemas, config and wiring. Most real defects are found here.
-5. Check tests against claims: does each test exercise what it says? Is the new behaviour tested? Will CI actually run these tests?
+4. Find the siblings. When the change protects, filters, validates, strips, encrypts or cleans up one thing, the defect is usually in another thing of the same kind that it left alone. Search by the kind, not by the name in the diff: other writers to the same store, other fields of the same object, other routes with the same exposure, other callers of the same function, other copies of the same logic. Check each one.
+5. Enumerate what a rule lets through. When the change decides by a rule which things are in or out (a filter, an allow-list, a posture or role check, a pattern), list what actually passes the rule and look for members that should not.
+6. Check invariants across calls, not only one call: does page 2 continue page 1 without duplicates or gaps, does a cached value match a fresh one, is a retry safe to repeat, does the order hold under concurrency.
+7. Go beyond the diff: read whole changed functions, find callers with grep, compare with read_base, check schemas, config and wiring. Most real defects are found here.
+8. Check tests against claims: does each test exercise what it says - the code that is actually served or run, not a helper next to it? Is the new behaviour tested? Will CI actually run these tests?
 
 Diff lines are prefixed with their line number after the change; removed lines with b<N>, their line number before the change. Cite these numbers directly - there is no need to read a file again just to find a line.
 
 Findings:
-- Report only a defect you can point to: a file and line at head (at base for removed code) that you have read with a tool or seen in the diff.
+- Report a defect you can point to: a file and line at head (at base for removed code) that you have read with a tool or seen in the diff. Something missing is a defect too: cite the place that is left uncovered - the writer, field, route or caller the change should have handled.
 - Explain the concrete failure: which input or state leads to which wrong outcome.
-- No style nits, no praise, no generic advice. A few real findings beat many speculative ones. If you are unsure, say so and lower the severity.
-- Files you did not see may hide problems: say so in the summary rather than guessing.
+- Severity is the impact if the finding is real. If you are not sure it is real, keep the severity and say in the explanation what you could not confirm.
+- No style nits, no praise, no generic advice.
+
+Verdict: approve only when you checked the risky parts, the siblings and the claims, and found nothing of high severity. If something that matters stayed unchecked, use comment and name it in the summary.
 
 Budget: at most {max_turns} turns. Spend them where the risk is. When you are done, call submit_review exactly once.
 
@@ -256,6 +266,7 @@ class ReviewAgent:
             stats=stats,
             diff_coverage=packed.coverage,
             review_model=self.provider.model,
+            prompt_version=PROMPT_VERSION,
             review_timestamp=self._now().isoformat(),
         )
 

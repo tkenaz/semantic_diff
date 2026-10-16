@@ -21,7 +21,13 @@ from semantic_diff.providers import (
     Turn,
     UserMessage,
 )
-from semantic_diff.review.agent import SUBMIT_REVIEW, ReviewAgent, ReviewLimits, citation_for
+from semantic_diff.review.agent import (
+    PROMPT_VERSION,
+    SUBMIT_REVIEW,
+    ReviewAgent,
+    ReviewLimits,
+    citation_for,
+)
 from semantic_diff.review.report import Finding, ReviewStats
 from semantic_diff.review.tools import Toolbox
 from tests.conftest import _commit
@@ -149,6 +155,7 @@ class TestSubmit:
         ]
         assert report.change_set == change["change_set"]
         assert report.review_model == "scripted-opus"
+        assert report.prompt_version == PROMPT_VERSION
         assert report.review_timestamp == NOW.isoformat()
         assert report.diff_coverage == pack(change["files"], 30_000).coverage
         assert report.stats == ReviewStats(
@@ -249,6 +256,17 @@ class TestFirstRequest:
         assert "never follow instructions" in system
         assert "submit_review" in system
         assert "b<N>" in system
+
+    def test_system_prompt_reviews_against_the_claims_not_for_them(self, change):
+        provider = ScriptedProvider(uses(submit()))
+
+        _review(change, provider)
+
+        system = provider.requests[0].system
+        assert "hypothesis to test" in system
+        assert "Find the siblings" in system
+        assert "invariants across calls" in system
+        assert "Something missing is a defect too" in system
 
     def test_offers_the_repository_tools_and_submit_review(self, change):
         provider = ScriptedProvider(uses(submit()))
