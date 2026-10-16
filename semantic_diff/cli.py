@@ -26,6 +26,7 @@ from semantic_diff.providers import build_provider
 from semantic_diff.review.agent import ReviewAgent, ReviewLimits
 from semantic_diff.review.markdown import ReviewMarkdownFormatter
 from semantic_diff.review.tools import Toolbox
+from semantic_diff.review.transcript import file_sink
 
 REPORTS_DIR_NAME = "semantic_diff_reports"
 
@@ -231,6 +232,12 @@ def mr_cmd(
     envvar="SEMANTIC_DIFF_REVIEW_DIFF_TOKENS",
     help="Diff shown up front; the agent reads the rest on demand",
 )
+@click.option(
+    "--transcript",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Write the whole review conversation here as JSON lines",
+)
 def review_cmd(
     base: Optional[str],
     head: Optional[str],
@@ -245,6 +252,7 @@ def review_cmd(
     max_turns: int,
     max_input_tokens: int,
     max_diff_tokens: int,
+    transcript: Optional[Path],
 ):
     """Review a merge request: an agent reads around the change and reports findings."""
     with _reported_errors(verbose):
@@ -270,7 +278,8 @@ def review_cmd(
             diff_budget_tokens=max_diff_tokens,
         )
         toolbox = Toolbox(parser.repo, head=change_set.head_sha, base=change_set.base_sha)
-        report = ReviewAgent(provider, toolbox, limits).review(change_set, files)
+        sink = file_sink(transcript) if transcript else None
+        report = ReviewAgent(provider, toolbox, limits, transcript=sink).review(change_set, files)
 
         formatter = ReviewMarkdownFormatter()
         if output_json:

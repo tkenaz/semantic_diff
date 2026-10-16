@@ -56,6 +56,25 @@ class TestReview:
         assert report["findings"][0]["citation"] == "head"
         assert report["stats"]["files_read"] == ["api.py"]
 
+    def test_transcript_records_the_whole_conversation(self, mr_repo, model, tmp_path):
+        path = tmp_path / "review.jsonl"
+
+        result = _review(mr_repo, "--json", "--transcript", str(path))
+
+        assert result.exit_code == 0, result.output
+        lines = [json.loads(line) for line in path.read_text().splitlines()]
+        assert [line["role"] for line in lines] == [
+            "system",
+            "user",
+            "assistant",
+            "tool",
+            "assistant",
+        ]
+        assert "hypothesis to test" in lines[0]["text"]
+        assert lines[2]["tool_calls"][0]["name"] == "read_file"
+        assert lines[3]["content"].endswith("    2|     return 3")
+        assert lines[4]["tool_calls"][0]["name"] == "submit_review"
+
     def test_save_writes_a_review_report(self, mr_repo, model):
         result = _review(mr_repo, "--json", "--save")
 

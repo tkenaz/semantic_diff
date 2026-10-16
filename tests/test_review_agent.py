@@ -758,3 +758,37 @@ class TestVerdict:
             None,
             None,
         )
+
+
+class TestTranscript:
+    def test_the_sink_gets_the_system_prompt_and_every_message(self, change):
+        recorded = []
+        provider = ScriptedProvider(uses(call("grep", {"pattern": "get"})), uses(submit()))
+        agent = ReviewAgent(
+            provider, change["toolbox"], transcript=lambda *args: recorded.append(args)
+        )
+
+        agent.review(change["change_set"], change["files"])
+
+        [(system, messages)] = recorded
+        assert system == provider.requests[0].system
+        assert [type(m).__name__ for m in messages] == [
+            "UserMessage",
+            "AssistantMessage",
+            "ToolResult",
+            "AssistantMessage",
+        ]
+
+    def test_an_unsubmitted_review_is_recorded_too(self, change):
+        recorded = []
+        provider = ScriptedProvider(*_grep_forever(2))
+        agent = ReviewAgent(
+            provider,
+            change["toolbox"],
+            limits=ReviewLimits(max_turns=2),
+            transcript=lambda *args: recorded.append(args),
+        )
+
+        agent.review(change["change_set"], change["files"])
+
+        assert len(recorded) == 1

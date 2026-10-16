@@ -37,6 +37,7 @@ from semantic_diff.review.report import (
     Verdict,
 )
 from semantic_diff.review.tools import Toolbox
+from semantic_diff.review.transcript import TranscriptSink
 
 SEVERITIES = ["low", "medium", "high", "critical"]
 
@@ -160,8 +161,10 @@ class ReviewAgent:
         toolbox: Toolbox,
         limits: ReviewLimits = ReviewLimits(),
         now: Callable[[], datetime] = datetime.now,
+        transcript: Optional[TranscriptSink] = None,
     ):
         self.provider = provider
+        self.transcript = transcript
         self.toolbox = toolbox
         self.limits = limits
         self._now = now
@@ -206,6 +209,7 @@ class ReviewAgent:
                     submitted = _parse_submission(call, turn)
                     if isinstance(submitted, SubmittedReview):
                         stats.submitted = True
+                        self._record(system, messages)
                         return self._report(change_set, packed, stats, submitted, last_text)
                     results.append(submitted)
                 elif wrapping_up:
@@ -216,10 +220,15 @@ class ReviewAgent:
             if wrapping_up:
                 wrap_up_turns += 1
                 if wrap_up_turns >= WRAP_UP_TURNS or stats.turns >= self.limits.max_turns:
+                    self._record(system, messages)
                     return self._report(change_set, packed, stats, None, last_text)
                 messages.extend(results or [UserMessage(self._wrap_up_note(stats))])
             else:
                 messages.extend(results or [UserMessage(NUDGE)])
+
+    def _record(self, system: str, messages: List[Message]) -> None:
+        if self.transcript:
+            self.transcript(system, messages)
 
     @staticmethod
     def _wrap_up_note(stats: ReviewStats) -> str:
