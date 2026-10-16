@@ -62,6 +62,8 @@ class ReviewReport(BaseModel):
     schema_version: int = 1
     change_set: ChangeSet
     verdict: Optional[Verdict]  # None: the model never submitted
+    submitted_verdict: Optional[Verdict] = None  # what the model proposed
+    verdict_note: Optional[str] = None  # why the verdict differs from the proposal
     summary: str
     findings: List[Finding]
     stats: ReviewStats

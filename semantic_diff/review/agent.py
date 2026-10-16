@@ -10,12 +10,12 @@ far - and the report says which limit cut it short.
 
 from dataclasses import dataclass, fields, replace
 from datetime import datetime
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 from pydantic import ValidationError
 
 from semantic_diff.diff_pack import DiffPack, pack
-from semantic_diff.models import ChangeSet, FileChange
+from semantic_diff.models import ChangeSet, FileChange, RiskLevel
 from semantic_diff.prompt_parts import format_change_set, format_diffs, format_files_summary
 from semantic_diff.providers import (
     Message,
@@ -34,6 +34,7 @@ from semantic_diff.review.report import (
     ReviewReport,
     ReviewStats,
     SubmittedReview,
+    Verdict,
 )
 from semantic_diff.review.tools import Toolbox
 
@@ -241,11 +242,17 @@ class ReviewAgent:
         submitted: Optional[SubmittedReview],
         last_text: str,
     ) -> ReviewReport:
+        findings = self._checked(submitted, packed, stats)
+        verdict, note = (None, None)
+        if submitted:
+            verdict, note = settle_verdict(submitted.verdict, findings, stats.limit_hit)
         return ReviewReport(
             change_set=change_set,
-            verdict=submitted.verdict if submitted else None,
+            verdict=verdict,
+            submitted_verdict=submitted.verdict if submitted else None,
+            verdict_note=note,
             summary=submitted.summary if submitted else (last_text or NOT_SUBMITTED),
-            findings=self._checked(submitted, packed, stats),
+            findings=findings,
             stats=stats,
             diff_coverage=packed.coverage,
             review_model=self.provider.model,
@@ -269,6 +276,34 @@ class ReviewAgent:
             )
             checked.append(Finding(**finding.model_dump(), citation=citation, seen=path in seen))
         return checked
+
+
+BLOCKING = (RiskLevel.CRITICAL, RiskLevel.HIGH)
+
+
+def settle_verdict(
+    proposed: Verdict, findings: List[Finding], limit_hit: Optional[Limit]
+) -> Tuple[Verdict, Optional[str]]:
+    """
+    The verdict the report gives, and why it differs from the model's proposal.
+    The model may ask for more caution than the evidence demands, never less:
+    a checked high finding requests changes, and nothing unfinished or
+    unchecked is approved.
+    """
+    if proposed == "request_changes":
+        return proposed, None
+    blocking = [f for f in findings if f.severity in BLOCKING]
+    checked = [f for f in blocking if f.citation in ("head", "base") and f.seen]
+    if checked:
+        worst = min(checked, key=lambda f: BLOCKING.index(f.severity)).severity.value
+        return "request_changes", f"a {worst} finding cites code the reviewer read"
+    if proposed != "approve":
+        return proposed, None
+    if blocking:
+        return "comment", "a high finding could not be checked against the code"
+    if limit_hit:
+        return "comment", f"the review stopped at its {limit_hit} limit before checking everything"
+    return proposed, None
 
 
 def citation_for(line: int, head_lines: Optional[int], base_lines: Optional[int]) -> Citation:
