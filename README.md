@@ -176,6 +176,29 @@ ANTHROPIC_API_KEY=sk-ant-...
 SEMANTIC_DIFF_MODEL=claude-sonnet-5-5  # or claude-opus-5-5
 ```
 
+### Model matters
+
+semantic-diff is exactly as good as the model under the hood. The tool packs
+the diff, makes the model read the real files and checks every citation
+against the base and the head of the change — but the judgement about
+intent, risk and what is *missing* comes from the model, and no amount of
+tooling adds judgement that is not there.
+
+Recommended: a current frontier model — Anthropic Claude 5 series or newer
+(`claude-sonnet-5-5` as the default, `claude-opus-5-5` for `review` on larger
+merge requests). That is the maintainer's recommendation, not a measurement:
+our own evaluation ran on the models available behind a corporate gateway, a
+previous-generation Claude and an open-weights 120B model. Before you trust
+verdicts on your codebase, run your own evaluation on a handful of merge
+requests your reviewers have already sent back.
+
+What our evaluation showed, in short: a strong model is reliable on defects
+in and around the diff, and weak on what the change left out elsewhere and
+on what only running the code reveals. The open-weights model missed nearly
+everything a human reviewer had found. Weaker models widen that gap. Treat
+the output as advisory, not a gate — keep a human on the merge button and
+let the tool shorten the reading.
+
 ### OpenAI-compatible gateways
 
 Any gateway that speaks the OpenAI Chat Completions protocol (LiteLLM, vLLM,
