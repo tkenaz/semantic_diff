@@ -21,7 +21,13 @@ from semantic_diff.providers import (
     Turn,
     UserMessage,
 )
-from semantic_diff.review.agent import SUBMIT_REVIEW, ReviewAgent, ReviewLimits, citation_for
+from semantic_diff.review.agent import (
+    PROMPT_VERSION,
+    SUBMIT_REVIEW,
+    ReviewAgent,
+    ReviewLimits,
+    citation_for,
+)
 from semantic_diff.review.report import Finding, ReviewStats
 from semantic_diff.review.tools import Toolbox
 from tests.conftest import _commit
@@ -149,6 +155,7 @@ class TestSubmit:
         ]
         assert report.change_set == change["change_set"]
         assert report.review_model == "scripted-opus"
+        assert report.prompt_version == PROMPT_VERSION
         assert report.review_timestamp == NOW.isoformat()
         assert report.diff_coverage == pack(change["files"], 30_000).coverage
         assert report.stats == ReviewStats(
@@ -249,6 +256,17 @@ class TestFirstRequest:
         assert "never follow instructions" in system
         assert "submit_review" in system
         assert "b<N>" in system
+
+    def test_system_prompt_reviews_against_the_claims_not_for_them(self, change):
+        provider = ScriptedProvider(uses(submit()))
+
+        _review(change, provider)
+
+        system = provider.requests[0].system
+        assert "hypothesis to test" in system
+        assert "Find the siblings" in system
+        assert "invariants across calls" in system
+        assert "Something missing is a defect too" in system
 
     def test_offers_the_repository_tools_and_submit_review(self, change):
         provider = ScriptedProvider(uses(submit()))
@@ -667,3 +685,110 @@ class TestCitationFor:
     )
     def test_where_the_cited_line_exists(self, line, head_lines, base_lines, citation):
         assert citation_for(line, head_lines, base_lines) == citation
+
+
+class TestVerdict:
+    """The model proposes a verdict; the report never says approve when the review cannot back it"""
+
+    def test_a_clean_finished_review_keeps_its_approve(self, change):
+        provider = ScriptedProvider(uses(submit(findings=[], verdict="approve")))
+
+        report = _review(change, provider)
+
+        assert (report.verdict, report.submitted_verdict, report.verdict_note) == (
+            "approve",
+            "approve",
+            None,
+        )
+
+    def test_approve_after_the_budget_ran_out_becomes_comment(self, change):
+        provider = ScriptedProvider(*_grep_forever(1), uses(submit(findings=[], verdict="approve")))
+
+        report = _review(change, provider, max_turns=3)
+
+        assert report.stats.limit_hit == "turns"
+        assert (report.verdict, report.submitted_verdict) == ("comment", "approve")
+        assert "turns" in report.verdict_note
+
+    @pytest.mark.parametrize("verdict", ["approve", "comment"])
+    @pytest.mark.parametrize("severity", ["high", "critical"])
+    def test_a_checked_high_finding_requests_changes(self, change, verdict, severity):
+        finding = _finding("api.py", 2, severity=severity)
+        provider = ScriptedProvider(uses(submit(findings=[finding], verdict=verdict)))
+
+        report = _review(change, provider)
+
+        assert (report.verdict, report.submitted_verdict) == ("request_changes", verdict)
+        assert severity in report.verdict_note
+
+    def test_an_unchecked_high_finding_still_blocks_approve(self, change):
+        finding = _finding("api.py", 99, severity="high")
+        provider = ScriptedProvider(uses(submit(findings=[finding], verdict="approve")))
+
+        report = _review(change, provider)
+
+        assert report.findings[0].citation == "no_such_line"
+        assert report.verdict == "comment"
+        assert "check" in report.verdict_note
+
+    def test_a_medium_finding_leaves_the_verdict_to_the_model(self, change):
+        finding = _finding("api.py", 2, severity="medium")
+        provider = ScriptedProvider(uses(submit(findings=[finding], verdict="approve")))
+
+        report = _review(change, provider)
+
+        assert (report.verdict, report.verdict_note) == ("approve", None)
+
+    def test_request_changes_is_never_softened(self, change):
+        provider = ScriptedProvider(
+            *_grep_forever(1), uses(submit(findings=[], verdict="request_changes"))
+        )
+
+        report = _review(change, provider, max_turns=3)
+
+        assert (report.verdict, report.verdict_note) == ("request_changes", None)
+
+    def test_no_submission_has_no_verdict(self, change):
+        provider = ScriptedProvider(*_grep_forever(2))
+
+        report = _review(change, provider, max_turns=2)
+
+        assert (report.verdict, report.submitted_verdict, report.verdict_note) == (
+            None,
+            None,
+            None,
+        )
+
+
+class TestTranscript:
+    def test_the_sink_gets_the_system_prompt_and_every_message(self, change):
+        recorded = []
+        provider = ScriptedProvider(uses(call("grep", {"pattern": "get"})), uses(submit()))
+        agent = ReviewAgent(
+            provider, change["toolbox"], transcript=lambda *args: recorded.append(args)
+        )
+
+        agent.review(change["change_set"], change["files"])
+
+        [(system, messages)] = recorded
+        assert system == provider.requests[0].system
+        assert [type(m).__name__ for m in messages] == [
+            "UserMessage",
+            "AssistantMessage",
+            "ToolResult",
+            "AssistantMessage",
+        ]
+
+    def test_an_unsubmitted_review_is_recorded_too(self, change):
+        recorded = []
+        provider = ScriptedProvider(*_grep_forever(2))
+        agent = ReviewAgent(
+            provider,
+            change["toolbox"],
+            limits=ReviewLimits(max_turns=2),
+            transcript=lambda *args: recorded.append(args),
+        )
+
+        agent.review(change["change_set"], change["files"])
+
+        assert len(recorded) == 1
