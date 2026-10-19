@@ -21,6 +21,7 @@ from openai.types.chat.chat_completion import Choice
 from semantic_diff.providers import (
     AnthropicProvider,
     Completion,
+    ModelUnavailableError,
     OpenAICompatProvider,
     ProviderError,
     RateLimitError,
@@ -86,6 +87,9 @@ VENDOR_ERRORS = {
         "server": lambda: anthropic.InternalServerError("boom", response=_http(500), body={}),
         "client": lambda: anthropic.BadRequestError("bad", response=_http(400), body={}),
         "client_499": lambda: anthropic.APIStatusError("odd", response=_http(499), body={}),
+        "not_found": lambda: anthropic.NotFoundError(
+            "model x retired, use y", response=_http(404), body={}
+        ),
     },
     "openai": {
         "rate_limit": lambda headers=None: openai.RateLimitError(
@@ -96,6 +100,9 @@ VENDOR_ERRORS = {
         "server": lambda: openai.InternalServerError("boom", response=_http(500), body={}),
         "client": lambda: openai.BadRequestError("bad", response=_http(400), body={}),
         "client_499": lambda: openai.APIStatusError("odd", response=_http(499), body={}),
+        "not_found": lambda: openai.NotFoundError(
+            "model x retired, use y", response=_http(404), body={}
+        ),
     },
 }
 
@@ -283,6 +290,21 @@ class TestAdapterErrorMapping:
             provider.complete("p", max_tokens=1)
 
         assert not isinstance(exc.value, TransientError)
+
+    def test_unknown_model_says_which_and_what_to_do(self, vendor):
+        error = VENDOR_ERRORS[vendor]["not_found"]()
+        provider = _adapter(vendor, _failing_client(vendor, error))
+
+        with pytest.raises(ModelUnavailableError) as exc:
+            provider.complete("p", max_tokens=1)
+
+        message = str(exc.value)
+        assert exc.value.model == "m"
+        assert message.startswith("model m is not available at this endpoint")
+        assert "SEMANTIC_DIFF_MODEL" in message
+        assert "model x retired, use y" in message
+        assert not isinstance(exc.value, TransientError)
+        assert exc.value.__cause__ is error
 
     def test_client_error_maps_to_provider_error_not_transient(self, vendor):
         provider = _adapter(vendor, _failing_client(vendor, VENDOR_ERRORS[vendor]["client"]()))
