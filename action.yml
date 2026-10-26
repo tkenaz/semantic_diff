@@ -12,12 +12,12 @@ inputs:
     required: true
 
   model:
-    description: 'Model to use (any Anthropic model id, e.g. claude-sonnet-5-5)'
+    description: 'Model to use: any Anthropic model id. Default claude-sonnet-5-5; pick claude-opus-5-5 for deeper reviews of larger PRs.'
     required: false
     default: 'claude-sonnet-5-5'
 
   fail_on_risk:
-    description: 'Fail the check if risk level meets or exceeds this (low, medium, high, critical, never)'
+    description: 'Fail the check if risk level meets or exceeds this (low, medium, high, critical, never). With review: true it reads the cited findings only — uncited observations never fail the check.'
     required: false
     default: 'never'
 
@@ -26,6 +26,16 @@ inputs:
     required: false
     default: 'true'
 
+  review:
+    description: 'Run the agentic reviewer on pull requests (reads the code around the change; findings split into cited and uncited) instead of the one-shot analysis'
+    required: false
+    default: 'false'
+
+  rules_path:
+    description: 'Path to a rule corpus checkout (INDEX.md + rules/*.md) that cited findings must reference; empty means every finding is an uncited observation'
+    required: false
+    default: ''
+
   base_ref:
     description: 'Base ref for comparison (default: auto-detect from PR)'
     required: false
@@ -33,8 +43,12 @@ inputs:
 
 outputs:
   risk_level:
-    description: 'Overall risk level (low, medium, high, critical)'
+    description: 'Risk level (low, medium, high, critical; with review: true from cited findings only, "none" without any)'
     value: ${{ steps.analyze.outputs.risk_level }}
+
+  verdict:
+    description: 'Review verdict (approve, comment, request_changes); only with review: true'
+    value: ${{ steps.analyze.outputs.verdict }}
 
   analysis_json:
     description: 'Full analysis as JSON'
@@ -71,6 +85,8 @@ runs:
         SEMANTIC_DIFF_MODEL: ${{ inputs.model }}
         # Event data reaches the script only as env: never as ${{ }} in run
         EVENT_NAME: ${{ github.event_name }}
+        REVIEW: ${{ inputs.review }}
+        RULES_PATH: ${{ inputs.rules_path }}
         BASE_REF_INPUT: ${{ inputs.base_ref }}
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -78,19 +94,33 @@ runs:
         PR_BODY: ${{ github.event.pull_request.body }}
         PUSH_SHA: ${{ github.sha }}
       run: |
-        # One LLM call: JSON on stdout, report saved, diagnostics on stderr
+        # One LLM run: JSON on stdout, report saved, diagnostics on stderr
         if [ "$EVENT_NAME" = "pull_request" ]; then
           # The whole PR from the merge base (needs actions/checkout fetch-depth: 0)
           printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr_description.md"
-          ANALYSIS=$(semantic-diff mr --base "${BASE_REF_INPUT:-$PR_BASE_SHA}" --head "$PR_HEAD_SHA" \
-            --title "$PR_TITLE" --description-file "$RUNNER_TEMP/pr_description.md" --json --save)
+          RANGE_ARGS=(--base "${BASE_REF_INPUT:-$PR_BASE_SHA}" --head "$PR_HEAD_SHA" \
+            --title "$PR_TITLE" --description-file "$RUNNER_TEMP/pr_description.md")
+          if [ "$REVIEW" = "true" ]; then
+            # Agentic review. The gate value (risk_level) comes from cited
+            # findings only; uncited observations never flip pass to fail.
+            RULES_ARGS=()
+            if [ -n "$RULES_PATH" ]; then
+              RULES_ARGS=(--rules "$RULES_PATH")
+            fi
+            ANALYSIS=$(semantic-diff review "${RANGE_ARGS[@]}" "${RULES_ARGS[@]}" --json --save)
+            RISK_LEVEL=$(echo "$ANALYSIS" | jq -r '.risk_level // "none"')
+            echo "verdict=$(echo "$ANALYSIS" | jq -r '.verdict // "none"')" >> "$GITHUB_OUTPUT"
+          else
+            ANALYSIS=$(semantic-diff mr "${RANGE_ARGS[@]}" --json --save)
+            RISK_LEVEL=$(echo "$ANALYSIS" | jq -r '.risk_assessment.overall_risk')
+          fi
         else
           ANALYSIS=$(semantic-diff analyze "$PUSH_SHA" --json --save)
+          RISK_LEVEL=$(echo "$ANALYSIS" | jq -r '.risk_assessment.overall_risk')
         fi
 
         echo "$ANALYSIS" > "$RUNNER_TEMP/semantic_diff_analysis.json"
 
-        RISK_LEVEL=$(echo "$ANALYSIS" | jq -r '.risk_assessment.overall_risk')
         echo "risk_level=$RISK_LEVEL" >> "$GITHUB_OUTPUT"
 
         DELIMITER="EOF_$(date +%s%N)"
@@ -103,8 +133,82 @@ runs:
         REPORT_PATH=$(ls -t semantic_diff_reports/*.md | head -1)
         echo "report_path=$REPORT_PATH" >> "$GITHUB_OUTPUT"
 
+    - name: Comment review on PR
+      if: inputs.comment_on_pr == 'true' && github.event_name == 'pull_request' && inputs.review == 'true'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const report = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/semantic_diff_analysis.json`, 'utf8'));
+
+          const icons = { low: '✅', medium: '⚠️', high: '🔶', critical: '🔴' };
+          const risk = report.risk_level || 'none';
+          const verdict = (report.verdict || 'not submitted').replace('_', ' ');
+          const where = (f) => `\`${f.file}:${f.line}\``;
+
+          let body = `## 🔍 Semantic Diff Review\n\n`;
+          body += `**Verdict:** ${verdict} · **Gate risk:** ${risk} `;
+          body += `*(from cited findings only; uncited observations never gate)*\n\n`;
+          body += `### Summary\n${report.summary}\n\n`;
+
+          if (report.findings.length > 0) {
+            body += `### Findings (cited)\n`;
+            for (const f of report.findings) {
+              body += `- ${icons[f.severity] || ''} **[${f.severity}]** ${where(f)} ${f.title}`;
+              body += ` — \`${f.rule_id}\`, ${f.source}\n`;
+            }
+            body += '\n';
+          }
+
+          if (report.uncited.length > 0) {
+            body += `<details><summary>Uncited observations (${report.uncited.length}) — `;
+            body += `informational, never gate</summary>\n\n`;
+            for (const f of report.uncited) {
+              body += `- **[${f.severity}]** ${where(f)} ${f.title}\n`;
+            }
+            body += `\n</details>\n\n`;
+          }
+
+          const cov = report.diff_coverage;
+          if (cov && cov.percent < 100) {
+            body += `> Diff coverage: ${cov.percent}% of changed lines shown up front\n\n`;
+          }
+          if (!report.stats.submitted) {
+            body += `> ⚠ Incomplete review: the model did not submit a review.\n\n`;
+          }
+
+          body += `---\n*Reviewed by [semantic-diff](https://github.com/tkenaz/semantic_diff) (${report.review_model})*`;
+
+          // Find existing comment to update
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number
+          });
+
+          const botComment = comments.find(c =>
+            c.body.includes('Semantic Diff Review') &&
+            c.user.type === 'Bot'
+          );
+
+          if (botComment) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: botComment.id,
+              body: body
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+          }
+
     - name: Comment on PR
-      if: inputs.comment_on_pr == 'true' && github.event_name == 'pull_request'
+      if: inputs.comment_on_pr == 'true' && github.event_name == 'pull_request' && inputs.review != 'true'
       uses: actions/github-script@v7
       with:
         script: |
@@ -191,11 +295,25 @@ runs:
         THRESHOLD: ${{ inputs.fail_on_risk }}
       run: |
 
-        # Risk levels in order
-        declare -A RISK_ORDER=( ["low"]=1 ["medium"]=2 ["high"]=3 ["critical"]=4 )
+        # Risk levels in order; "none" (a review without cited findings) is 0
+        # and never gates. Uncited observations do not reach this step at all.
+        level() {
+          case "$1" in
+            low) echo 1 ;;
+            medium) echo 2 ;;
+            high) echo 3 ;;
+            critical) echo 4 ;;
+            *) echo 0 ;;
+          esac
+        }
 
-        RISK_NUM=${RISK_ORDER[$RISK]}
-        THRESHOLD_NUM=${RISK_ORDER[$THRESHOLD]}
+        RISK_NUM=$(level "$RISK")
+        THRESHOLD_NUM=$(level "$THRESHOLD")
+
+        if [ "$THRESHOLD_NUM" -eq 0 ]; then
+          echo "::error::Unknown fail_on_risk threshold: $THRESHOLD"
+          exit 1
+        fi
 
         if [ "$RISK_NUM" -ge "$THRESHOLD_NUM" ]; then
           echo "::error::Risk level $RISK meets or exceeds threshold $THRESHOLD"

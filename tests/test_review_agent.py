@@ -21,7 +21,14 @@ from semantic_diff.providers import (
     Turn,
     UserMessage,
 )
-from semantic_diff.review.agent import SUBMIT_REVIEW, ReviewAgent, ReviewLimits, citation_for
+from semantic_diff.review.agent import (
+    SUBMIT_REVIEW,
+    ReviewAgent,
+    ReviewLimits,
+    _evidence_in_diff,
+    citation_for,
+)
+from semantic_diff.review.corpus import RulesCorpus
 from semantic_diff.review.report import Finding, ReviewStats
 from semantic_diff.review.tools import Toolbox
 from tests.conftest import _commit
@@ -118,8 +125,10 @@ def change(mr_repo):
     return {"change_set": change_set, "files": files, "toolbox": toolbox}
 
 
-def _review(change, provider, **limits):
-    agent = ReviewAgent(provider, change["toolbox"], limits=ReviewLimits(**limits), now=lambda: NOW)
+def _review(change, provider, corpus=None, **limits):
+    agent = ReviewAgent(
+        provider, change["toolbox"], limits=ReviewLimits(**limits), now=lambda: NOW, corpus=corpus
+    )
     return agent.review(change["change_set"], change["files"])
 
 
@@ -135,7 +144,11 @@ class TestSubmit:
 
         assert report.verdict == "request_changes"
         assert report.summary == "Changes the return value of get()."
-        assert report.findings == [
+        # Without a rule corpus nothing can be cited: the finding is reported
+        # as an uncited observation, and nothing gates (risk_level is None)
+        assert report.findings == []
+        assert report.risk_level is None
+        assert report.uncited == [
             Finding(
                 file="api.py",
                 line=2,
@@ -145,6 +158,7 @@ class TestSubmit:
                 suggestion="Update the caller or keep the value.",
                 citation="head",
                 seen=True,
+                uncited_reason="no_rule",
             )
         ]
         assert report.change_set == change["change_set"]
@@ -564,7 +578,7 @@ class TestCitations:
 
         report = _review(change, provider)
 
-        assert [f.citation for f in report.findings] == [
+        assert [f.citation for f in report.uncited] == [
             "head",
             "no_such_line",
             "no_such_file",
@@ -587,7 +601,7 @@ class TestCitations:
 
         report = _review(change, provider)
 
-        assert [f.seen for f in report.findings] == [True, True, False]
+        assert [f.seen for f in report.uncited] == [True, True, False]
 
     def test_a_line_that_only_existed_before_the_change_cites_base(self, change, mr_repo):
         head = _commit(
@@ -598,7 +612,7 @@ class TestCitations:
 
         report = _review(change, provider)
 
-        assert report.findings[0].citation == "base"
+        assert report.uncited[0].citation == "base"
 
     def test_a_renamed_file_is_seen_under_its_new_path(self, change):
         change["files"] = [change["files"][0].model_copy(update={"path": "old_api.py -> api.py"})]
@@ -606,7 +620,7 @@ class TestCitations:
 
         report = _review(change, provider)
 
-        assert report.findings[0].seen is True
+        assert report.uncited[0].seen is True
 
     def test_a_path_with_spaces_is_seen_whole(self, change):
         change["files"] = [change["files"][0].model_copy(update={"path": "docs/my api.py"})]
@@ -614,14 +628,14 @@ class TestCitations:
 
         report = _review(change, provider)
 
-        assert report.findings[0].seen is True
+        assert report.uncited[0].seen is True
 
     def test_a_dot_slash_path_matches_the_seen_file(self, change):
         provider = ScriptedProvider(uses(submit(findings=[_finding("./api.py", 1)])))
 
         report = _review(change, provider)
 
-        assert report.findings[0].seen is True
+        assert report.uncited[0].seen is True
 
     def test_a_trailing_slash_matches_the_seen_file(self, change):
         # Found by semantic-diff review on its own code (14.10)
@@ -629,14 +643,14 @@ class TestCitations:
 
         report = _review(change, provider)
 
-        assert (report.findings[0].citation, report.findings[0].seen) == ("head", True)
+        assert (report.uncited[0].citation, report.uncited[0].seen) == ("head", True)
 
     def test_a_file_cut_from_the_diff_is_not_seen(self, change):
         provider = ScriptedProvider(uses(submit(findings=[_finding("api.py", 1)])))
 
         report = _review(change, provider, diff_budget_tokens=5)
 
-        assert report.findings[0].seen is False
+        assert report.uncited[0].seen is False
 
     def test_a_grep_hit_does_not_count_as_seeing_the_file(self, change):
         provider = ScriptedProvider(
@@ -646,7 +660,190 @@ class TestCitations:
 
         report = _review(change, provider)
 
-        assert report.findings[0].seen is False
+        assert report.uncited[0].seen is False
+
+
+CARD_SOURCE = "OWASP ASVS 5.0 §8.2.1 (CC BY-SA 4.0)"
+
+CITED = {
+    **VALID_SUBMISSION["findings"][0],
+    "rule_id": "TEST-1",
+    "source": CARD_SOURCE,
+    "evidence": "+    return 3",
+}
+
+
+@pytest.fixture
+def corpus(tmp_path):
+    root = tmp_path / "corpus"
+    (root / "rules").mkdir(parents=True)
+    (root / "INDEX.md").write_text(
+        "| diff signal | tags |\n|---|---|\n| return value changed | api |\n"
+    )
+    (root / "rules" / "api.md").write_text(
+        f"### [TEST-1] Return values stay compatible\n"
+        f"severity: high\ntags: [api]\nsource: {CARD_SOURCE}\n"
+        f"### [TEST-2] Second card\nseverity: low\ntags: [api]\nsource: {CARD_SOURCE}\n"
+    )
+    return RulesCorpus(root)
+
+
+class TestChannels:
+    """findings = cited (card verified, evidence holds); uncited never gates"""
+
+    def test_a_card_backed_finding_with_evidence_is_cited_and_sets_the_gate(self, change, corpus):
+        provider = ScriptedProvider(uses(submit(findings=[CITED])))
+
+        report = _review(change, provider, corpus=corpus)
+
+        [finding] = report.findings
+        assert (finding.rule_id, finding.source) == ("TEST-1", CARD_SOURCE)
+        assert finding.uncited_reason is None
+        assert report.uncited == []
+        assert report.risk_level == RiskLevel.HIGH
+
+    def test_without_a_corpus_a_claimed_rule_id_cannot_be_verified(self, change):
+        provider = ScriptedProvider(uses(submit(findings=[CITED])))
+
+        report = _review(change, provider)
+
+        assert report.findings == []
+        assert report.uncited[0].uncited_reason == "unknown_rule_id"
+        assert report.risk_level is None
+
+    def test_an_invented_rule_id_is_demoted_not_trusted(self, change, corpus):
+        provider = ScriptedProvider(uses(submit(findings=[{**CITED, "rule_id": "GHOST-99"}])))
+
+        report = _review(change, provider, corpus=corpus)
+
+        assert report.findings == []
+        assert report.uncited[0].uncited_reason == "unknown_rule_id"
+
+    def test_a_rule_id_without_its_source_is_no_citation(self, change, corpus):
+        provider = ScriptedProvider(uses(submit(findings=[{**CITED, "source": None}])))
+
+        report = _review(change, provider, corpus=corpus)
+
+        assert report.uncited[0].uncited_reason == "no_rule"
+
+    def test_a_cited_finding_on_a_line_that_does_not_exist_does_not_gate(self, change, corpus):
+        provider = ScriptedProvider(uses(submit(findings=[{**CITED, "line": 99}])))
+
+        report = _review(change, provider, corpus=corpus)
+
+        assert report.findings == []
+        assert (report.uncited[0].citation, report.uncited[0].uncited_reason) == (
+            "no_such_line",
+            "no_evidence",
+        )
+
+    def test_a_cited_finding_in_an_unseen_file_does_not_gate(self, change, corpus):
+        provider = ScriptedProvider(
+            uses(submit(findings=[{**CITED, "file": "models.py", "evidence": "FIELD_1 = 1"}]))
+        )
+
+        report = _review(change, provider, corpus=corpus)
+
+        assert report.uncited[0].uncited_reason == "no_evidence"
+
+    @pytest.mark.parametrize("evidence", [None, "", "this line is not in the diff"])
+    def test_evidence_must_quote_the_diff(self, change, corpus, evidence):
+        provider = ScriptedProvider(uses(submit(findings=[{**CITED, "evidence": evidence}])))
+
+        report = _review(change, provider, corpus=corpus)
+
+        assert report.findings == []
+        assert report.uncited[0].uncited_reason == "no_evidence"
+
+    def test_the_gate_reads_cited_findings_only(self, change, corpus):
+        critical_observation = {
+            **VALID_SUBMISSION["findings"][0],
+            "severity": "critical",
+            "title": "Scary but uncited",
+        }
+        cited_medium = {**CITED, "severity": "medium"}
+        provider = ScriptedProvider(uses(submit(findings=[critical_observation, cited_medium])))
+
+        report = _review(change, provider, corpus=corpus)
+
+        assert report.risk_level == RiskLevel.MEDIUM
+        assert [f.severity for f in report.uncited] == [RiskLevel.CRITICAL]
+
+    def test_the_corpus_reaches_the_model_up_front_and_through_read_rules(self, change, corpus):
+        provider = ScriptedProvider(
+            uses(call("read_rules", {"path": "rules/api.md"})), uses(submit())
+        )
+
+        report = _review(change, provider, corpus=corpus)
+
+        assert [t.name for t in provider.requests[0].tools] == [
+            *[s.name for s in change["toolbox"].specs],
+            "read_rules",
+            "submit_review",
+        ]
+        first = provider.requests[0].messages[0].text
+        assert "## Rule corpus" in first
+        assert "| return value changed | api |" in first
+        assert "rules/api.md" in first
+        [result] = _results(provider.requests[1])
+        assert "[TEST-1] Return values stay compatible" in result.content
+        assert not result.is_error
+        assert report.stats.tool_calls == 1
+        assert report.stats.files_read == []  # corpus files are not repository reads
+
+    def test_read_rules_outside_the_corpus_is_an_error(self, change, corpus):
+        provider = ScriptedProvider(
+            uses(call("read_rules", {"path": "../secrets.txt"})), uses(submit())
+        )
+
+        _review(change, provider, corpus=corpus)
+
+        [result] = _results(provider.requests[1])
+        assert result.is_error
+        assert "no such corpus file" in result.content
+
+    def test_without_a_corpus_read_rules_is_not_offered(self, change):
+        provider = ScriptedProvider(uses(submit()))
+
+        _review(change, provider)
+
+        assert "read_rules" not in [t.name for t in provider.requests[0].tools]
+        assert "## Rule corpus" not in provider.requests[0].messages[0].text
+
+    def test_the_system_prompt_names_the_channel_rules(self, change, corpus):
+        with_corpus = ScriptedProvider(uses(submit()))
+        without = ScriptedProvider(uses(submit()))
+
+        _review(change, with_corpus, corpus=corpus)
+        _review(change, without)
+
+        assert "copied VERBATIM" in with_corpus.requests[0].system
+        assert "never gate a merge" in with_corpus.requests[0].system
+        assert "No rule corpus is configured" in without.requests[0].system
+
+
+class TestEvidenceInDiff:
+    DIFF = "@@ -1,2 +1,2 @@\n def get():\n-    return 1\n+    return 3"
+
+    @pytest.mark.parametrize(
+        "evidence, held",
+        [
+            ("+    return 3", True),
+            ("return 3", True),  # the diff marker is optional
+            ("-    return 1", True),
+            ("def get():", True),  # context lines count as diff lines
+            ("+    return 3\n-    return 1", True),  # every quoted line must hold
+            ("+    return 3\nreturn 2", False),  # one bad line spoils the quote
+            ("return 2", False),
+            ("", False),
+            (None, False),
+        ],
+    )
+    def test_quoted_lines_must_be_diff_lines(self, evidence, held):
+        assert _evidence_in_diff(evidence, self.DIFF) is held
+
+    def test_no_diff_for_the_file_means_no_evidence(self):
+        assert _evidence_in_diff("+    return 3", None) is False
 
 
 class TestCitationFor:

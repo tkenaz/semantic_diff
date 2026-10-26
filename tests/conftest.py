@@ -96,6 +96,7 @@ def no_real_llm_credentials(monkeypatch):
         "SEMANTIC_DIFF_REVIEW_DIFF_TOKENS",
         "SEMANTIC_DIFF_MAX_TURNS",
         "SEMANTIC_DIFF_MAX_INPUT_TOKENS",
+        "SEMANTIC_DIFF_RULES",
         "SEMANTIC_DIFF_PROVIDER",
         "SEMANTIC_DIFF_MODEL",
         "OPENAI_API_KEY",
@@ -254,7 +255,7 @@ def mock_semantic_analysis(mock_file_change):
                 priority=RiskLevel.MEDIUM,
             ),
         ],
-        analysis_model="claude-sonnet-4-5-20250929",
+        analysis_model="claude-sonnet-5-5",
         analysis_timestamp=datetime.now().isoformat(),
         tokens_used=5423,
     )
@@ -302,7 +303,7 @@ def mock_minimal_analysis():
             risks=[],
         ),
         review_questions=[],
-        analysis_model="claude-sonnet-4-5-20250929",
+        analysis_model="claude-sonnet-5-5",
         analysis_timestamp=datetime.now().isoformat(),
         tokens_used=234,
     )
