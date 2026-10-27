@@ -50,82 +50,34 @@ jobs:
           files: ./coverage.xml
           fail_ci_if_error: false
 
-  # Self-analysis: semantic-diff analyzes its own commits
-  # Skip on forks (no access to secrets) and dependabot
-  semantic-analysis:
+  # Self-review: semantic-diff reviews its own pull requests through its own
+  # action, at the PR's code. Skip on forks (no access to secrets) and dependabot
+  semantic-review:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history for analysis
+          fetch-depth: 0  # The reviewer reads the base of the change too
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install semantic-diff
-        run: pip install -e .
-
-      - name: Analyze PR commits
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - name: Skip without a key
+        if: env.HAS_KEY != 'true'
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::notice::semantic-diff: ANTHROPIC_API_KEY not configured, skipping self-analysis"
-            exit 0
-          fi
+          echo "::notice::semantic-diff: ANTHROPIC_API_KEY not configured, skipping self-review"
 
-          # Analyze the HEAD commit of the PR
-          semantic-diff HEAD --json > analysis.json
-
-          # Extract risk level
-          RISK=$(cat analysis.json | jq -r '.risk_assessment.overall_risk')
-          echo "Risk level: $RISK"
-
-          # Advisory, not a gate (see README, "Model matters"): flag it, never fail on it
-          if [ "$RISK" = "critical" ]; then
-            echo "::warning::semantic-diff rates this commit critical risk: read the analysis"
-          fi
-
-      - name: Comment analysis on PR
-        if: hashFiles('analysis.json') != ''
-        uses: actions/github-script@v7
+      # Advisory, not a gate (see README, "Model matters"): it comments, never fails
+      - name: Review this PR
+        if: env.HAS_KEY == 'true'
+        uses: ./
         with:
-          script: |
-            const fs = require('fs');
-            const analysis = JSON.parse(fs.readFileSync('analysis.json', 'utf8'));
-
-            const riskEmoji = {
-              'low': '✅',
-              'medium': '⚠️',
-              'high': '🔶',
-              'critical': '🔴'
-            };
-
-            const risk = analysis.risk_assessment.overall_risk;
-            const emoji = riskEmoji[risk] || '❓';
-
-            let body = `## ${emoji} Self-Analysis: semantic-diff on semantic-diff\n\n`;
-            body += `**Risk Level:** ${risk.toUpperCase()}\n\n`;
-            body += `### 🎯 Intent\n${analysis.intent.summary}\n\n`;
-
-            if (analysis.review_questions.length > 0) {
-              body += `### ❓ Questions to Consider\n`;
-              for (const q of analysis.review_questions.slice(0, 3)) {
-                body += `- ${q.question}\n`;
-              }
-            }
-
-            body += `\n---\n*🐕 Dogfooding: This project analyzes itself*`;
-
-            github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: body
-            });
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          review: 'true'
+          fail_on_risk: 'never'

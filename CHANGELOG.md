@@ -50,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   users and not only for editable checkouts; it is also loaded before options
   are parsed, so `.env`-only settings such as `SEMANTIC_DIFF_RULES` and
   `SEMANTIC_DIFF_MAX_DIFF_TOKENS` take effect.
+- GitHub Action used as a local action (`uses: ./`) installed the CLI from
+  `main` instead of the checkout it runs from; it now installs its own code.
 - Test fixtures and docs referenced a previous-generation model id; defaults
   and examples now consistently use `claude-sonnet-5-5` (with
   `claude-opus-5-5` called out for deeper reviews).

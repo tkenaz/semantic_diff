@@ -74,8 +74,14 @@ runs:
         # tag: in v0.2.0 it still carried 0.1.0, whose CLI lacked --save).
         ACTION_REPO: ${{ github.action_repository }}
         ACTION_REF: ${{ github.action_ref }}
+        # A local action (uses: ./) has neither: install the checkout it runs from
+        ACTION_PATH: ${{ github.action_path }}
       run: |
-        pip install "git+https://github.com/${ACTION_REPO:-tkenaz/semantic_diff}@${ACTION_REF:-main}"
+        if [ -z "$ACTION_REPO" ]; then
+          pip install "$ACTION_PATH"
+        else
+          pip install "git+https://github.com/${ACTION_REPO}@${ACTION_REF}"
+        fi
 
     - name: Run semantic-diff
       id: analyze
