@@ -6,7 +6,7 @@ Adding a protocol = one adapter module + one entry in PROVIDERS.
 import os
 from typing import Callable, Dict, Optional
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from semantic_diff.providers.base import LLMProvider
 from semantic_diff.providers.retrying import RetryingProvider
@@ -63,7 +63,9 @@ PROVIDERS: Dict[str, Callable[[Optional[str]], LLMProvider]] = {
 
 def build_provider(model: Optional[str] = None, *, load_env: bool = True) -> RetryingProvider:
     if load_env:
-        load_dotenv()
+        # usecwd: the .env of the repository being analyzed; the default
+        # searches upward from this module, i.e. from site-packages
+        load_dotenv(find_dotenv(usecwd=True))
     name = os.getenv("SEMANTIC_DIFF_PROVIDER", "anthropic")
     if name not in PROVIDERS:
         raise ValueError(f"Unknown provider '{name}'. Known: {', '.join(PROVIDERS)}")

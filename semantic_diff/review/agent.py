@@ -8,6 +8,7 @@ which only submit_review is carried out, so a review always ends with what was f
 far - and the report says which limit cut it short.
 """
 
+import re
 from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from typing import Callable, Dict, List, Optional, Tuple
@@ -76,7 +77,8 @@ SUBMIT_REVIEW = ToolSpec(
                         "rule_id": {
                             "type": "string",
                             "description": "Only when a card of the provided rule corpus backs "
-                            "this finding: its id, copied verbatim (never invented)",
+                            "this finding: its id as in the card heading, without the brackets "
+                            "(never invented)",
                         },
                         "source": {
                             "type": "string",
@@ -85,7 +87,8 @@ SUBMIT_REVIEW = ToolSpec(
                         "evidence": {
                             "type": "string",
                             "description": "The diff line(s) this finding rests on, quoted "
-                            "verbatim (required for a cited finding)",
+                            "verbatim, without the line-number prefix (required for a cited "
+                            "finding)",
                         },
                     },
                     "required": ["file", "line", "severity", "title", "explanation"],
@@ -316,6 +319,7 @@ class ReviewAgent:
         uncited: List[Finding] = []
         for finding in submitted.findings:
             path = _normalize(finding.file)
+            finding = self._with_card(finding)
             citation = citation_for(
                 finding.line,
                 self.toolbox.line_count("head", path),
@@ -328,6 +332,18 @@ class ReviewAgent:
             )
             (cited if reason is None else uncited).append(checked)
         return cited, uncited
+
+    def _with_card(self, finding: SubmittedFinding) -> SubmittedFinding:
+        """The bare card id, and for a real card its own source line: the report
+        prints the corpus's source, never the model's copy of it. A citation
+        without a source stays without one (and does not gate)."""
+        if not finding.rule_id:
+            return finding
+        rule_id = _card_id(finding.rule_id)
+        source = finding.source
+        if source and self.corpus and self.corpus.sources.get(rule_id):
+            source = self.corpus.sources[rule_id]
+        return finding.model_copy(update={"rule_id": rule_id, "source": source})
 
     def _uncited_reason(
         self,
@@ -359,6 +375,11 @@ def citation_for(line: int, head_lines: Optional[int], base_lines: Optional[int]
     return "no_such_line"
 
 
+def _card_id(rule_id: str) -> str:
+    """'[SEC-1]', ' SEC-1 ' -> 'SEC-1': the form CARD_ID takes from a heading."""
+    return rule_id.strip().strip("[]").strip()
+
+
 def _normalize(path: str) -> str:
     return path.strip().removeprefix("./").rstrip("/")
 
@@ -375,12 +396,18 @@ def _evidence_in_diff(evidence: Optional[str], diff: Optional[str]) -> bool:
     return bool(quoted) and all(_variants(line) & diff_lines for line in quoted)
 
 
+# The prefix number_lines puts on a diff line shown to the model: "   42|", "  b17|"
+LINE_NUMBER = re.compile(r"^\s*b?\d+\|")
+
+
 def _variants(line: str) -> set:
-    """A line as quoted, and without a leading diff marker: both count as the same line."""
-    stripped = line.strip()
-    variants = {stripped}
-    if stripped[:1] in "+-":
-        variants.add(stripped[1:].strip())
+    """A line as quoted, without the line-number prefix the model was shown, and
+    without a leading diff marker: all count as the same line."""
+    variants = set()
+    for form in {line.strip(), LINE_NUMBER.sub("", line, count=1).strip()}:
+        variants.add(form)
+        if form[:1] in "+-":
+            variants.add(form[1:].strip())
     return variants
 
 

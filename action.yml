@@ -43,7 +43,7 @@ inputs:
 
 outputs:
   risk_level:
-    description: 'Risk level (low, medium, high, critical; with review: true from cited findings only, "none" without any)'
+    description: 'Risk level (low, medium, high, critical; with review: true from cited findings only, "none" without any, "incomplete" when the reviewer never submitted)'
     value: ${{ steps.analyze.outputs.risk_level }}
 
   verdict:
@@ -108,7 +108,10 @@ runs:
               RULES_ARGS=(--rules "$RULES_PATH")
             fi
             ANALYSIS=$(semantic-diff review "${RANGE_ARGS[@]}" "${RULES_ARGS[@]}" --json --save)
-            RISK_LEVEL=$(echo "$ANALYSIS" | jq -r '.risk_level // "none"')
+            # A review the model never submitted (a limit cut it short) has no
+            # findings at all: "incomplete", which fails any gate, never "none"
+            RISK_LEVEL=$(echo "$ANALYSIS" | jq -r \
+              'if .stats.submitted == true then (.risk_level // "none") else "incomplete" end')
             echo "verdict=$(echo "$ANALYSIS" | jq -r '.verdict // "none"')" >> "$GITHUB_OUTPUT"
           else
             ANALYSIS=$(semantic-diff mr "${RANGE_ARGS[@]}" --json --save)
@@ -141,21 +144,30 @@ runs:
           const fs = require('fs');
           const report = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/semantic_diff_analysis.json`, 'utf8'));
 
+          // Everything the model wrote may quote the PR author's content: no
+          // HTML, no @-mentions; one-line fields stay on one line, code spans closed
+          const esc = (text) => String(text ?? '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/@/g, '@\u200b');
+          const line = (text) => esc(text).replace(/\s+/g, ' ').trim();
+          // Code spans render no HTML or mentions: only keep them on one line and closed
+          const code = (text) => `\`${String(text ?? '').replace(/\s+/g, ' ').trim().replace(/`/g, "'")}\``;
+
           const icons = { low: '✅', medium: '⚠️', high: '🔶', critical: '🔴' };
-          const risk = report.risk_level || 'none';
+          const risk = report.stats.submitted ? (report.risk_level || 'none') : 'incomplete';
           const verdict = (report.verdict || 'not submitted').replace('_', ' ');
-          const where = (f) => `\`${f.file}:${f.line}\``;
+          const where = (f) => code(`${f.file}:${f.line}`);
 
           let body = `## 🔍 Semantic Diff Review\n\n`;
           body += `**Verdict:** ${verdict} · **Gate risk:** ${risk} `;
           body += `*(from cited findings only; uncited observations never gate)*\n\n`;
-          body += `### Summary\n${report.summary}\n\n`;
+          body += `### Summary\n${esc(report.summary)}\n\n`;
 
           if (report.findings.length > 0) {
             body += `### Findings (cited)\n`;
             for (const f of report.findings) {
-              body += `- ${icons[f.severity] || ''} **[${f.severity}]** ${where(f)} ${f.title}`;
-              body += ` — \`${f.rule_id}\`, ${f.source}\n`;
+              body += `- ${icons[f.severity] || ''} **[${f.severity}]** ${where(f)} ${line(f.title)}`;
+              body += ` — ${code(f.rule_id)}, ${line(f.source)}\n`;
             }
             body += '\n';
           }
@@ -164,7 +176,7 @@ runs:
             body += `<details><summary>Uncited observations (${report.uncited.length}) — `;
             body += `informational, never gate</summary>\n\n`;
             for (const f of report.uncited) {
-              body += `- **[${f.severity}]** ${where(f)} ${f.title}\n`;
+              body += `- **[${f.severity}]** ${where(f)} ${line(f.title)}\n`;
             }
             body += `\n</details>\n\n`;
           }
@@ -312,6 +324,12 @@ runs:
 
         if [ "$THRESHOLD_NUM" -eq 0 ]; then
           echo "::error::Unknown fail_on_risk threshold: $THRESHOLD"
+          exit 1
+        fi
+
+        # Nothing was checked, so nothing can pass: fail closed
+        if [ "$RISK" = "incomplete" ]; then
+          echo "::error::The review is incomplete (the reviewer never submitted): failing the check"
           exit 1
         fi
 

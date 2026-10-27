@@ -13,6 +13,7 @@ import pytest
 
 from semantic_diff.diff_pack import pack
 from semantic_diff.models import ChangeSet, CommitRef, FileChange, RiskLevel
+from semantic_diff.prompt_parts import number_lines
 from semantic_diff.providers import (
     StopReason,
     ToolCall,
@@ -719,6 +720,32 @@ class TestChannels:
         assert report.findings == []
         assert report.uncited[0].uncited_reason == "unknown_rule_id"
 
+    @pytest.mark.parametrize("rule_id", ["[TEST-1]", " TEST-1 ", "[ TEST-1 ]"])
+    def test_a_rule_id_copied_with_brackets_or_spaces_is_the_card_id(self, change, corpus, rule_id):
+        provider = ScriptedProvider(uses(submit(findings=[{**CITED, "rule_id": rule_id}])))
+
+        report = _review(change, provider, corpus=corpus)
+
+        [finding] = report.findings
+        assert finding.rule_id == "TEST-1"
+
+    def test_the_report_prints_the_cards_source_not_the_models_copy(self, change, corpus):
+        provider = ScriptedProvider(uses(submit(findings=[{**CITED, "source": "OWASP §8"}])))
+
+        report = _review(change, provider, corpus=corpus)
+
+        [finding] = report.findings
+        assert finding.source == CARD_SOURCE
+
+    def test_evidence_quoted_as_shown_with_its_line_number_holds(self, change, corpus):
+        # The diff reaches the model numbered; a quote copied as displayed is verbatim
+        quoted = {**CITED, "evidence": "    3|+    return 3"}
+        provider = ScriptedProvider(uses(submit(findings=[quoted])))
+
+        report = _review(change, provider, corpus=corpus)
+
+        assert report.findings and report.findings[0].uncited_reason is None
+
     def test_a_rule_id_without_its_source_is_no_citation(self, change, corpus):
         provider = ScriptedProvider(uses(submit(findings=[{**CITED, "source": None}])))
 
@@ -842,6 +869,14 @@ class TestEvidenceInDiff:
     def test_quoted_lines_must_be_diff_lines(self, evidence, held):
         assert _evidence_in_diff(evidence, self.DIFF) is held
 
+    def test_every_line_of_the_numbered_rendering_holds(self):
+        numbered = number_lines(self.DIFF).splitlines()[1:]  # skip the hunk header
+
+        assert numbered and all(_evidence_in_diff(line, self.DIFF) for line in numbered)
+
+    def test_a_real_line_that_looks_numbered_still_matches_as_quoted(self):
+        assert _evidence_in_diff("+12|x", "@@ -0,0 +1 @@\n+12|x") is True
+
     def test_no_diff_for_the_file_means_no_evidence(self):
         assert _evidence_in_diff("+    return 3", None) is False
 
@@ -864,3 +899,22 @@ class TestCitationFor:
     )
     def test_where_the_cited_line_exists(self, line, head_lines, base_lines, citation):
         assert citation_for(line, head_lines, base_lines) == citation
+
+
+class TestRulesCorpus:
+    def test_cards_ids_and_sources_are_read_once(self, corpus):
+        (corpus.root / "rules" / "api.md").unlink()  # the review keeps what it started with
+
+        assert corpus.rule_ids == {"TEST-1", "TEST-2"}
+        assert corpus.sources["TEST-1"] == CARD_SOURCE
+        assert corpus.rule_files == ["rules/api.md"]
+
+    def test_a_card_without_a_source_line_has_an_empty_source(self, tmp_path):
+        root = tmp_path / "c"
+        (root / "rules").mkdir(parents=True)
+        (root / "INDEX.md").write_text("x")
+        (root / "rules" / "a.md").write_text(
+            "### [A-1] No source\nseverity: low\n### [A-2] Has one\nsource: Spec §2\n"
+        )
+
+        assert RulesCorpus(root).sources == {"A-1": "", "A-2": "Spec §2"}

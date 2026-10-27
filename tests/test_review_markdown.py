@@ -203,6 +203,17 @@ class TestChannels:
             "treat the citation as invented." in md
         )
 
+    def test_an_invented_rule_id_cannot_break_out_of_its_code_span(self):
+        md = _md(
+            findings=[],
+            uncited=[
+                _finding(rule_id="X`\n# Approved", source="x", uncited_reason="unknown_rule_id")
+            ],
+        )
+
+        assert "> ⚠ Cites rule ``X` # Approved``, which is not in the configured corpus" in md
+        assert "\n# Approved" not in md
+
     def test_failed_evidence_is_called_out(self):
         md = _md(
             findings=[],
@@ -338,7 +349,7 @@ class TestWholeDocument:
         assert (
             "**Verdict:** none · claude-opus-4.6 · 2026-10-14T12:00:00\n"
             "\n"
-            "**Gate risk:** none — from cited findings only; uncited observations never gate.\n"
+            "**Gate risk:** incomplete — from cited findings only; uncited observations never gate.\n"
             "\n"
             "> ⚠ **Incomplete review:** the model did not submit a review.\n"
             "\n"

@@ -8,16 +8,20 @@ The corpus has two jobs here:
 - give the model the cards (INDEX.md inlined up front, rule files on demand
   through the `read_rules` tool), and
 - give the agent the set of real card ids, so a cited `rule_id` that does not
-  exist in the corpus is caught in code, never trusted.
+  exist in the corpus is caught in code, never trusted, and each card's source
+  line, so the source a report prints is the card's, not the model's copy.
+
+The directory is read once: the files a review may load do not change under it.
 """
 
 import re
 from pathlib import Path
-from typing import FrozenSet, List, Tuple
+from typing import Dict, FrozenSet, List, Tuple
 
 from semantic_diff.providers import ToolCall, ToolResult, ToolSpec
 
 CARD_ID = re.compile(r"^###\s*\[([^\]\s]+)\]", re.MULTILINE)
+CARD_SOURCE = re.compile(r"^source:[ \t]*(.+?)\s*$", re.MULTILINE)
 
 READ_RULES = ToolSpec(
     "read_rules",
@@ -43,23 +47,16 @@ class RulesCorpus:
         index = self.root / "INDEX.md"
         if not index.is_file():
             raise ValueError(f"rules corpus has no INDEX.md: {self.root}")
+        self.index_text = index.read_text(encoding="utf-8")
+        self.rule_files: List[str] = sorted(
+            f"rules/{path.name}" for path in (self.root / "rules").glob("*.md")
+        )
         if not self.rule_files:
             raise ValueError(f"rules corpus has no rules/*.md files: {self.root}")
-
-    @property
-    def index_text(self) -> str:
-        return (self.root / "INDEX.md").read_text(encoding="utf-8")
-
-    @property
-    def rule_files(self) -> List[str]:
-        return sorted(f"rules/{path.name}" for path in (self.root / "rules").glob("*.md"))
-
-    @property
-    def rule_ids(self) -> FrozenSet[str]:
-        ids = []
+        self.sources: Dict[str, str] = {}
         for name in self.rule_files:
-            ids += CARD_ID.findall((self.root / name).read_text(encoding="utf-8"))
-        return frozenset(ids)
+            self.sources.update(_card_sources((self.root / name).read_text(encoding="utf-8")))
+        self.rule_ids: FrozenSet[str] = frozenset(self.sources)
 
     @property
     def specs(self) -> Tuple[ToolSpec, ...]:
@@ -82,3 +79,14 @@ class RulesCorpus:
                 call.id, f"no such corpus file: {clean}; available: {available}", is_error=True
             )
         return ToolResult(call.id, (self.root / clean).read_text(encoding="utf-8"))
+
+
+def _card_sources(text: str) -> Dict[str, str]:
+    """Card id -> its source line ('' for a card without one)."""
+    headings = list(CARD_ID.finditer(text))
+    sources = {}
+    for i, heading in enumerate(headings):
+        end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
+        source = CARD_SOURCE.search(text, heading.end(), end)
+        sources[heading.group(1)] = source.group(1) if source else ""
+    return sources

@@ -24,7 +24,10 @@ class ReviewMarkdownFormatter:
     def format(self, report: ReviewReport) -> str:
         cs = report.change_set
         verdict = report.verdict.replace("_", " ") if report.verdict else "none"
-        risk = report.risk_level.value if report.risk_level else "none"
+        if not report.stats.submitted:
+            risk = "incomplete"  # nothing was checked: as the Action's gate reads it
+        else:
+            risk = report.risk_level.value if report.risk_level else "none"
         lines = [
             f"# Review: {cs.ref}",
             "",
@@ -32,8 +35,7 @@ class ReviewMarkdownFormatter:
             "",
             f"**Verdict:** {verdict} · {report.review_model} · {report.review_timestamp}",
             "",
-            f"**Gate risk:** {risk} — from cited findings only; "
-            "uncited observations never gate.",
+            f"**Gate risk:** {risk} — from cited findings only; uncited observations never gate.",
             "",
         ]
         lines += _warning(report)
@@ -151,8 +153,10 @@ def _how_it_went(report: ReviewReport) -> List[str]:
 
 
 def _code(location: str) -> str:
-    # CommonMark: a span opened by N backticks closes only at a run of exactly N.
-    # A location ends with its line number, so only a leading backtick needs padding.
+    # CommonMark: a span opened by N backticks closes only at a run of exactly N,
+    # and a backtick at either edge needs a space against the fence. One line
+    # only: a newline would let model-written text (a rule id) start a new block.
+    location = " ".join(location.split())
     fence = "`" * (max((len(run) for run in re.findall(r"`+", location)), default=0) + 1)
-    padded = f" {location} " if location.startswith("`") else location
+    padded = f" {location} " if location[:1] == "`" or location[-1:] == "`" else location
     return f"{fence}{padded}{fence}"

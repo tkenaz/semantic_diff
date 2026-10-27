@@ -10,15 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed (breaking)
 - `semantic-diff review --json` schema is now `schema_version` 2 (KEN-315):
   findings are split into two channels. `findings` holds only **cited**
-  findings — backed by a rule card from a configured corpus (`rule_id` +
-  `source` copied verbatim, verified in code against the corpus) and by
+  findings — backed by a rule card from a configured corpus (`rule_id`
+  verified in code against the corpus, brackets and stray spaces ignored;
+  `source` is printed from the card itself, not from the model) and by
   evidence that checked out (the cited line exists, the file was seen, the
-  quoted `evidence` is in the diff). Everything else lands in `uncited` with
+  quoted `evidence` is in the diff, with or without the line-number prefix
+  the model was shown). Everything else lands in `uncited` with
   honest severity: observations without a card, invented rule ids, findings
   whose evidence failed a check. New top-level `risk_level` carries the worst
   severity among cited findings (null without any) — the only value a CI gate
   should read; `uncited` never flips a pass to a fail.
-- The review Markdown report gained a `Gate risk` line, a `Rule:` line and the
+- The review Markdown report gained a `Gate risk` line (`incomplete` when the
+  model never submitted), a `Rule:` line and the
   quoted evidence on cited findings, and an `Uncited observations` section.
 
 ### Added
@@ -35,9 +38,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shows the verdict, cited findings and uncited observations, and
   `fail_on_risk` reads cited findings only. The risk-threshold step now treats
   `none` as never failing and rejects unknown thresholds loudly (and no longer
-  needs bash 4).
+  needs bash 4). A review the model never submitted (a turn, token or context
+  limit cut it short) reports `risk_level` output `incomplete` and fails any
+  `fail_on_risk` threshold: nothing checked means nothing passed. Model text in
+  the PR comment is escaped (no HTML, no @-mentions, one-line fields stay on
+  one line).
 
 ### Fixed
+- `.env` is now found in the current directory (the analyzed repository), not
+  searched upward from the installed package, so it works for `pip install`
+  users and not only for editable checkouts; it is also loaded before options
+  are parsed, so `.env`-only settings such as `SEMANTIC_DIFF_RULES` and
+  `SEMANTIC_DIFF_MAX_DIFF_TOKENS` take effect.
 - Test fixtures and docs referenced a previous-generation model id; defaults
   and examples now consistently use `claude-sonnet-5-5` (with
   `claude-opus-5-5` called out for deeper reviews).

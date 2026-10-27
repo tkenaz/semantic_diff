@@ -482,6 +482,34 @@ class TestAnthropicConverseRequest:
 
         assert "tools" not in _anthropic_sent(client)
 
+    def test_an_empty_turn_replays_as_a_placeholder_not_empty_content(self):
+        # The API rejects an assistant message without content before the last one
+        provider, client = _anthropic(_anthropic_response(TextBlock(type="text", text="ok")))
+
+        provider.converse(
+            "sys",
+            [UserMessage("hi"), AssistantMessage(""), UserMessage("go on")],
+            [],
+            max_tokens=1,
+        )
+
+        assistant = _anthropic_sent(client)["messages"][1]
+        assert assistant == {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "(no reply)"}],
+        }
+
+    def test_blank_text_beside_a_tool_call_is_not_sent(self):
+        provider, client = _anthropic(_anthropic_response(TextBlock(type="text", text="ok")))
+        call = ToolCall(id="t1", name="read_file", arguments={"path": "a.py"}, raw_arguments="")
+
+        provider.converse(
+            "sys", [AssistantMessage("  \n", (call,)), ToolResult("t1", "x")], [], max_tokens=1
+        )
+
+        [block] = _anthropic_sent(client)["messages"][0]["content"]
+        assert block["type"] == "tool_use"
+
     def test_unparsable_arguments_replay_as_an_empty_object(self):
         # tool_use input must be an object; this call never parsed in the first place
         provider, client = _anthropic(_anthropic_response(TextBlock(type="text", text="ok")))
@@ -518,7 +546,7 @@ class TestAnthropicConverseResponse:
                 ToolCall("toolu_2", "grep", {"pattern": "x"}, '{"pattern": "x"}'),
             ),
             stop_reason=StopReason.TOOL_USE,
-            input_tokens=100,
+            input_tokens=195,  # the whole prompt: uncached tail + cache read + cache write
             output_tokens=20,
             cache_read_tokens=80,
             cache_write_tokens=15,
@@ -540,6 +568,15 @@ class TestAnthropicConverseResponse:
         turn = provider.converse("sys", [UserMessage("hi")], [], max_tokens=1)
 
         assert turn.stop_reason is reason
+
+    def test_a_tool_call_cut_off_by_max_tokens_is_max_tokens(self):
+        # The agent tells the model to submit something shorter only on MAX_TOKENS
+        provider, _ = _anthropic(_anthropic_response(_tool_use(), stop_reason="max_tokens"))
+
+        turn = provider.converse("sys", [UserMessage("hi")], [], max_tokens=1)
+
+        assert turn.stop_reason is StopReason.MAX_TOKENS
+        assert len(turn.tool_calls) == 1
 
     def test_tool_use_blocks_win_over_an_unexpected_stop_reason(self):
         provider, _ = _anthropic(_anthropic_response(_tool_use(), stop_reason="end_turn"))

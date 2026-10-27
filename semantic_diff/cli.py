@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 import click
+from dotenv import find_dotenv, load_dotenv
 from rich.console import Console
 from rich.markdown import Markdown
 
@@ -476,6 +477,10 @@ def route_args(args: List[str]) -> List[str]:
 
 def cli():
     """Entry point that handles both commands and direct commit analysis."""
+    # Before click parses: options with envvar= (SEMANTIC_DIFF_RULES, ...) read
+    # os.environ then, so a .env loaded later by build_provider would be too late.
+    # usecwd: the user's .env, not one found next to the installed package
+    load_dotenv(find_dotenv(usecwd=True))
     sys.argv = ["semantic-diff"] + route_args(sys.argv[1:])
     main()
 
