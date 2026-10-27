@@ -73,9 +73,11 @@ jobs:
         run: |
           echo "::notice::semantic-diff: ANTHROPIC_API_KEY not configured, skipping self-review"
 
-      # Advisory, not a gate (see README, "Model matters"): it comments, never fails
+      # Advisory, not a gate (see README, "Model matters"): it comments, never
+      # fails, not even when the API or the CLI does
       - name: Review this PR
         if: env.HAS_KEY == 'true'
+        continue-on-error: true
         uses: ./
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
