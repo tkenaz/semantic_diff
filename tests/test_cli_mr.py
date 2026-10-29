@@ -33,7 +33,7 @@ def _gitlab_env(mr_repo, **overrides):
     env = {
         "CI_MERGE_REQUEST_DIFF_BASE_SHA": mr_repo["base"].hexsha,
         "CI_COMMIT_SHA": mr_repo["head"].hexsha,
-        "CI_MERGE_REQUEST_TITLE": "fix(platform): AHUB-7 return 3",
+        "CI_MERGE_REQUEST_TITLE": "fix(platform): PROJ-7 return 3",
         "CI_MERGE_REQUEST_DESCRIPTION": "Why: the spec says 3.",
     }
     return {**env, **overrides}
@@ -80,14 +80,14 @@ class TestMrLocal:
                 "--repo",
                 mr_repo["path"],
                 "--title",
-                "AHUB-7 return 3",
+                "PROJ-7 return 3",
                 "--description-file",
                 str(description),
             ],
         )
 
         change_set, _ = _analyzed(analyzer)
-        assert change_set.title == "AHUB-7 return 3"
+        assert change_set.title == "PROJ-7 return 3"
         assert change_set.description == "Because the spec says so."
 
     def test_head_defaults_to_checked_out_head(self, mr_repo, analyzer):
@@ -167,7 +167,7 @@ class TestMrGitlabEnv:
             mr_repo["base"].hexsha,
             mr_repo["head"].hexsha,
         )
-        assert change_set.title == "fix(platform): AHUB-7 return 3"
+        assert change_set.title == "fix(platform): PROJ-7 return 3"
         assert change_set.description == "Why: the spec says 3."
 
     def test_explicit_flags_override_ci_variables(self, mr_repo, analyzer):

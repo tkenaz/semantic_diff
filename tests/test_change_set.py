@@ -70,12 +70,12 @@ class TestFromRange:
     def test_maps_range_info_with_given_title_and_description(self):
         info = _range_info(("feat: a", "Dev One <d1@x>"), ("fix: b", "Dev Two <d2@x>"))
 
-        change_set = from_range(info, title="AHUB-1 do the thing", description="Why: because")
+        change_set = from_range(info, title="PROJ-1 do the thing", description="Why: because")
 
         assert change_set.kind == "merge_request"
         assert change_set.ref == f"{'b' * 8}..{'h' * 8}"
         assert (change_set.base_sha, change_set.head_sha) == ("b" * 40, "h" * 40)
-        assert change_set.title == "AHUB-1 do the thing"
+        assert change_set.title == "PROJ-1 do the thing"
         assert change_set.description == "Why: because"
         assert change_set.authors == ["Dev One <d1@x>", "Dev Two <d2@x>"]
         assert [c.subject for c in change_set.commits] == ["feat: a", "fix: b"]
@@ -109,7 +109,7 @@ class TestGitlabMrContext:
     MR_ENV = {
         "CI_MERGE_REQUEST_DIFF_BASE_SHA": "b" * 40,
         "CI_COMMIT_SHA": "h" * 40,
-        "CI_MERGE_REQUEST_TITLE": "fix(platform): AHUB-1 thing",
+        "CI_MERGE_REQUEST_TITLE": "fix(platform): PROJ-1 thing",
         "CI_MERGE_REQUEST_DESCRIPTION": "What/why/how",
     }
 
@@ -119,7 +119,7 @@ class TestGitlabMrContext:
         assert context == {
             "base": "b" * 40,
             "head": "h" * 40,
-            "title": "fix(platform): AHUB-1 thing",
+            "title": "fix(platform): PROJ-1 thing",
             "description": "What/why/how",
         }
 
