@@ -6,9 +6,13 @@ network client is faked.
 
 from unittest.mock import Mock
 
+import anthropic
 import httpx
 import openai
 import pytest
+from anthropic.types import Message as AnthropicMessage
+from anthropic.types import TextBlock, ToolUseBlock
+from anthropic.types import Usage as AnthropicUsage
 from openai.types import CompletionUsage
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
@@ -18,6 +22,7 @@ from openai.types.chat.chat_completion_message_tool_call import (
 )
 
 from semantic_diff.providers import (
+    AnthropicProvider,
     AssistantMessage,
     OpenAICompatProvider,
     ProviderError,
@@ -329,6 +334,294 @@ class TestOpenAIConverseErrors:
             provider.converse("sys", [UserMessage("hi")], [], max_tokens=1)
 
         client.chat.completions.create.side_effect = openai.BadRequestError(
+            "bad", response=httpx.Response(400, request=REQUEST), body={}
+        )
+        with pytest.raises(ProviderError) as exc:
+            provider.converse("sys", [UserMessage("hi")], [], max_tokens=1)
+        assert not isinstance(exc.value, TransientError)
+
+
+# --- Anthropic adapter -------------------------------------------------------
+
+
+def _anthropic_response(*blocks, stop_reason="end_turn", usage=None) -> AnthropicMessage:
+    return AnthropicMessage(
+        id="msg_1",
+        type="message",
+        role="assistant",
+        model="claude-sonnet-5-5",
+        content=list(blocks),
+        stop_reason=stop_reason,
+        stop_sequence=None,
+        usage=usage or AnthropicUsage(input_tokens=100, output_tokens=20),
+    )
+
+
+def _anthropic_usage(input_tokens=100, output_tokens=20, **extra) -> AnthropicUsage:
+    return AnthropicUsage.model_validate(
+        {"input_tokens": input_tokens, "output_tokens": output_tokens, **extra}
+    )
+
+
+def _tool_use(call_id="toolu_1", name="read_file", arguments=None) -> ToolUseBlock:
+    return ToolUseBlock(type="tool_use", id=call_id, name=name, input=arguments or {"path": "a.py"})
+
+
+def _anthropic(response) -> tuple:
+    client = Mock()
+    client.messages.create.return_value = response
+    return AnthropicProvider(client=client, model="claude-sonnet-5-5"), client
+
+
+def _anthropic_sent(client) -> dict:
+    return client.messages.create.call_args.kwargs
+
+
+class TestAnthropicConverseRequest:
+    def test_sends_system_tools_and_conversation_in_anthropic_shape(self):
+        provider, client = _anthropic(_anthropic_response(TextBlock(type="text", text="done")))
+        call = ToolCall(id="t1", name="read_file", arguments={"path": "a.py"}, raw_arguments="")
+
+        provider.converse(
+            "You review code.",
+            [
+                UserMessage("Review this."),
+                AssistantMessage("Reading.", (call,)),
+                ToolResult("t1", "print(1)"),
+            ],
+            [READ_FILE],
+            max_tokens=500,
+        )
+
+        assert _anthropic_sent(client) == {
+            "model": "claude-sonnet-5-5",
+            "max_tokens": 500,
+            "system": [{"type": "text", "text": "You review code.", "cache_control": CACHE}],
+            "tools": [
+                {
+                    "name": "read_file",
+                    "description": "Read a file",
+                    "input_schema": READ_FILE.parameters,
+                }
+            ],
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "Review this."}]},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "Reading."},
+                        {
+                            "type": "tool_use",
+                            "id": "t1",
+                            "name": "read_file",
+                            "input": {"path": "a.py"},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "t1",
+                            "content": "print(1)",
+                            "cache_control": CACHE,
+                        }
+                    ],
+                },
+            ],
+        }
+
+    def test_all_results_of_one_turn_share_one_user_message(self):
+        provider, client = _anthropic(_anthropic_response(TextBlock(type="text", text="ok")))
+
+        provider.converse(
+            "sys",
+            [ToolResult("t1", "one"), ToolResult("t2", "two"), UserMessage("go on")],
+            [],
+            max_tokens=1,
+        )
+
+        messages = _anthropic_sent(client)["messages"]
+        assert [m["role"] for m in messages] == ["user", "user"]
+        assert [b["tool_use_id"] for b in messages[0]["content"]] == ["t1", "t2"]
+
+    def test_error_tool_result_is_flagged_for_the_model(self):
+        provider, client = _anthropic(_anthropic_response(TextBlock(type="text", text="ok")))
+
+        provider.converse(
+            "sys", [ToolResult("t1", "no such file", is_error=True)], [], max_tokens=1
+        )
+
+        [block] = _anthropic_sent(client)["messages"][0]["content"]
+        assert block["is_error"] is True
+
+    def test_cache_marks_only_the_system_prompt_and_the_last_message(self):
+        provider, client = _anthropic(_anthropic_response(TextBlock(type="text", text="ok")))
+
+        provider.converse(
+            "sys",
+            [UserMessage("one"), AssistantMessage("two"), UserMessage("three")],
+            [],
+            max_tokens=1,
+        )
+
+        sent = _anthropic_sent(client)
+        assert "cache_control" in sent["system"][0]
+        marked = [
+            i
+            for i, m in enumerate(sent["messages"])
+            if any("cache_control" in block for block in m["content"])
+        ]
+        assert marked == [len(sent["messages"]) - 1]
+
+    def test_no_tools_sends_no_tools_key(self):
+        provider, client = _anthropic(_anthropic_response(TextBlock(type="text", text="ok")))
+
+        provider.converse("sys", [UserMessage("hi")], [], max_tokens=1)
+
+        assert "tools" not in _anthropic_sent(client)
+
+    def test_an_empty_turn_replays_as_a_placeholder_not_empty_content(self):
+        # The API rejects an assistant message without content before the last one
+        provider, client = _anthropic(_anthropic_response(TextBlock(type="text", text="ok")))
+
+        provider.converse(
+            "sys",
+            [UserMessage("hi"), AssistantMessage(""), UserMessage("go on")],
+            [],
+            max_tokens=1,
+        )
+
+        assistant = _anthropic_sent(client)["messages"][1]
+        assert assistant == {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "(no reply)"}],
+        }
+
+    def test_blank_text_beside_a_tool_call_is_not_sent(self):
+        provider, client = _anthropic(_anthropic_response(TextBlock(type="text", text="ok")))
+        call = ToolCall(id="t1", name="read_file", arguments={"path": "a.py"}, raw_arguments="")
+
+        provider.converse(
+            "sys", [AssistantMessage("  \n", (call,)), ToolResult("t1", "x")], [], max_tokens=1
+        )
+
+        [block] = _anthropic_sent(client)["messages"][0]["content"]
+        assert block["type"] == "tool_use"
+
+    def test_unparsable_arguments_replay_as_an_empty_object(self):
+        # tool_use input must be an object; this call never parsed in the first place
+        provider, client = _anthropic(_anthropic_response(TextBlock(type="text", text="ok")))
+        call = ToolCall(id="t1", name="read_file", arguments=None, raw_arguments="{oops")
+
+        provider.converse(
+            "sys", [AssistantMessage("", (call,)), ToolResult("t1", "bad args")], [], max_tokens=1
+        )
+
+        [block] = _anthropic_sent(client)["messages"][0]["content"]
+        assert block["input"] == {}
+
+
+class TestAnthropicConverseResponse:
+    def test_tool_use_blocks_become_a_tool_use_turn(self):
+        provider, _ = _anthropic(
+            _anthropic_response(
+                TextBlock(type="text", text="Let me look."),
+                _tool_use("toolu_1", "read_file", {"path": "a.py"}),
+                _tool_use("toolu_2", "grep", {"pattern": "x"}),
+                stop_reason="tool_use",
+                usage=_anthropic_usage(
+                    100, 20, cache_read_input_tokens=80, cache_creation_input_tokens=15
+                ),
+            )
+        )
+
+        turn = provider.converse("sys", [UserMessage("hi")], [READ_FILE], max_tokens=1)
+
+        assert turn == Turn(
+            text="Let me look.",
+            tool_calls=(
+                ToolCall("toolu_1", "read_file", {"path": "a.py"}, '{"path": "a.py"}'),
+                ToolCall("toolu_2", "grep", {"pattern": "x"}, '{"pattern": "x"}'),
+            ),
+            stop_reason=StopReason.TOOL_USE,
+            input_tokens=195,  # the whole prompt: uncached tail + cache read + cache write
+            output_tokens=20,
+            cache_read_tokens=80,
+            cache_write_tokens=15,
+        )
+
+    @pytest.mark.parametrize(
+        "stop, reason",
+        [
+            ("end_turn", StopReason.END),
+            ("max_tokens", StopReason.MAX_TOKENS),
+            ("stop_sequence", StopReason.END),
+        ],
+    )
+    def test_stop_reason_mapping(self, stop, reason):
+        provider, _ = _anthropic(
+            _anthropic_response(TextBlock(type="text", text="x"), stop_reason=stop)
+        )
+
+        turn = provider.converse("sys", [UserMessage("hi")], [], max_tokens=1)
+
+        assert turn.stop_reason is reason
+
+    def test_a_tool_call_cut_off_by_max_tokens_is_max_tokens(self):
+        # The agent tells the model to submit something shorter only on MAX_TOKENS
+        provider, _ = _anthropic(_anthropic_response(_tool_use(), stop_reason="max_tokens"))
+
+        turn = provider.converse("sys", [UserMessage("hi")], [], max_tokens=1)
+
+        assert turn.stop_reason is StopReason.MAX_TOKENS
+        assert len(turn.tool_calls) == 1
+
+    def test_tool_use_blocks_win_over_an_unexpected_stop_reason(self):
+        provider, _ = _anthropic(_anthropic_response(_tool_use(), stop_reason="end_turn"))
+
+        turn = provider.converse("sys", [UserMessage("hi")], [], max_tokens=1)
+
+        assert turn.stop_reason is StopReason.TOOL_USE
+
+    def test_no_text_block_is_empty_text_not_an_error(self):
+        provider, _ = _anthropic(_anthropic_response(_tool_use(), stop_reason="tool_use"))
+
+        assert provider.converse("sys", [UserMessage("hi")], [], max_tokens=1).text == ""
+
+    def test_missing_cache_counters_count_as_zero(self):
+        provider, _ = _anthropic(
+            _anthropic_response(TextBlock(type="text", text="x"), usage=_anthropic_usage(9, 3))
+        )
+
+        turn = provider.converse("sys", [UserMessage("hi")], [], max_tokens=1)
+
+        assert (turn.input_tokens, turn.output_tokens) == (9, 3)
+        assert (turn.cache_read_tokens, turn.cache_write_tokens) == (0, 0)
+
+
+class TestAnthropicConverseErrors:
+    def test_errors_map_like_complete(self):
+        client = Mock()
+        provider = AnthropicProvider(client=client, model="m")
+
+        client.messages.create.side_effect = anthropic.RateLimitError(
+            "slow",
+            response=httpx.Response(429, headers={"retry-after": "4"}, request=REQUEST),
+            body={},
+        )
+        with pytest.raises(RateLimitError) as exc:
+            provider.converse("sys", [UserMessage("hi")], [], max_tokens=1)
+        assert exc.value.retry_after == 4.0
+
+        client.messages.create.side_effect = anthropic.InternalServerError(
+            "boom", response=httpx.Response(502, request=REQUEST), body={}
+        )
+        with pytest.raises(TransientError):
+            provider.converse("sys", [UserMessage("hi")], [], max_tokens=1)
+
+        client.messages.create.side_effect = anthropic.BadRequestError(
             "bad", response=httpx.Response(400, request=REQUEST), body={}
         )
         with pytest.raises(ProviderError) as exc:

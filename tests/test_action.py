@@ -25,7 +25,11 @@ if [[ " $* " == *" --save "* ]]; then
   mkdir -p semantic_diff_reports && echo report > semantic_diff_reports/mr_x.md
   echo "Report saved: semantic_diff_reports/mr_x.md" >&2
 fi
-echo '{"schema_version": 2, "risk_assessment": {"overall_risk": "medium"}}'
+if [ "$1" = "review" ]; then
+  echo '{"schema_version": 2, "risk_level": '"${STUB_RISK:-null}"', "verdict": "request_changes", "stats": {"submitted": '"${STUB_SUBMITTED:-true}"'}}'
+else
+  echo '{"schema_version": 2, "risk_assessment": {"overall_risk": "medium"}}'
+fi
 """
 
 
@@ -89,9 +93,13 @@ PR_ENV = {
     "PR_HEAD_SHA": "h" * 40,
     "PUSH_SHA": "p" * 40,
     "BASE_REF_INPUT": "",
+    "REVIEW": "false",
+    "RULES_PATH": "",
     "PR_TITLE": 'feat: x"; rm -rf / #',
     "PR_BODY": "Why: because.\n$(touch pwned)",
 }
+
+REVIEW_ENV = {**PR_ENV, "REVIEW": "true"}
 
 
 class TestAnalyzeStep:
@@ -139,3 +147,162 @@ class TestAnalyzeStep:
     def test_run_scripts_take_event_data_only_through_env(self):
         for step in _steps().values():
             assert "${{" not in step.get("run", ""), step.get("name")
+
+
+class TestReviewStep:
+    def test_review_true_runs_the_agentic_reviewer_on_pull_requests(self, sandbox):
+        result = _run_step(_steps()["analyze"], {**sandbox["env"], **REVIEW_ENV}, sandbox["cwd"])
+
+        assert result.returncode == 0, result.stderr
+        [call] = _calls(sandbox)
+        assert call.startswith(f"review --base {'b' * 40} --head {'h' * 40} ")
+        assert "--json" in call and "--save" in call
+        assert "--rules" not in call
+
+    def test_the_gate_value_is_the_cited_findings_risk(self, sandbox):
+        env = {**sandbox["env"], **REVIEW_ENV, "STUB_RISK": '"high"'}
+
+        _run_step(_steps()["analyze"], env, sandbox["cwd"])
+
+        outputs = _outputs(sandbox)
+        assert outputs["risk_level"] == "high"
+        assert outputs["verdict"] == "request_changes"
+
+    def test_a_review_without_cited_findings_reports_risk_none(self, sandbox):
+        # risk_level null in the report: uncited observations never gate
+        _run_step(_steps()["analyze"], {**sandbox["env"], **REVIEW_ENV}, sandbox["cwd"])
+
+        assert _outputs(sandbox)["risk_level"] == "none"
+
+    def test_an_unsubmitted_review_is_incomplete_not_none(self, sandbox):
+        # Limits cut the review short: no findings because nothing was checked
+        env = {**sandbox["env"], **REVIEW_ENV, "STUB_SUBMITTED": "false"}
+
+        _run_step(_steps()["analyze"], env, sandbox["cwd"])
+
+        assert _outputs(sandbox)["risk_level"] == "incomplete"
+
+    def test_rules_path_reaches_the_cli(self, sandbox):
+        env = {**sandbox["env"], **REVIEW_ENV, "RULES_PATH": "skills/compliance-review"}
+
+        _run_step(_steps()["analyze"], env, sandbox["cwd"])
+
+        [call] = _calls(sandbox)
+        assert "--rules skills/compliance-review" in call
+
+    def test_push_events_keep_the_one_shot_analysis(self, sandbox):
+        env = {**sandbox["env"], **REVIEW_ENV, "EVENT_NAME": "push"}
+
+        _run_step(_steps()["analyze"], env, sandbox["cwd"])
+
+        assert _calls(sandbox)[0].startswith(f"analyze {'p' * 40} ")
+
+
+class TestRiskGate:
+    def _gate(self, sandbox, risk, threshold):
+        env = {**sandbox["env"], "RISK": risk, "THRESHOLD": threshold}
+        return _run_step(_steps()["Check risk threshold"], env, sandbox["cwd"])
+
+    @pytest.mark.parametrize(
+        "risk, threshold, fails",
+        [
+            ("low", "high", False),
+            ("medium", "high", False),
+            ("high", "high", True),
+            ("critical", "high", True),
+            ("critical", "low", True),
+            ("low", "low", True),
+        ],
+    )
+    def test_fails_when_risk_meets_or_exceeds_the_threshold(self, sandbox, risk, threshold, fails):
+        result = self._gate(sandbox, risk, threshold)
+
+        assert (result.returncode != 0) is fails, result.stdout + result.stderr
+
+    def test_risk_none_never_fails_the_check(self, sandbox):
+        # A review without cited findings gates nothing, whatever the threshold
+        result = self._gate(sandbox, "none", "low")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "below threshold" in result.stdout
+
+    def test_an_incomplete_review_fails_any_threshold(self, sandbox):
+        result = self._gate(sandbox, "incomplete", "critical")
+
+        assert result.returncode == 1
+        assert "review is incomplete" in result.stdout
+
+    def test_an_unknown_threshold_is_a_loud_error(self, sandbox):
+        result = self._gate(sandbox, "low", "bogus")
+
+        assert result.returncode == 1
+        assert "Unknown fail_on_risk threshold" in result.stdout
+
+
+HARNESS = """
+const captured = {};
+const github = { rest: { issues: {
+  listComments: async () => ({ data: [] }),
+  createComment: async (args) => { captured.body = args.body; },
+  updateComment: async (args) => { captured.body = args.body; },
+} } };
+const context = { repo: { owner: "o", repo: "r" }, issue: { number: 1 } };
+(async () => {
+%s
+})().then(() => process.stdout.write(captured.body));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="the comment script needs node")
+class TestReviewComment:
+    def _comment(self, sandbox, report):
+        (sandbox["tmp"] / "semantic_diff_analysis.json").write_text(json.dumps(report))
+        script = _steps()["Comment review on PR"]["with"]["script"]
+        result = subprocess.run(
+            ["node", "-e", HARNESS % script],
+            env={**sandbox["env"]},
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    REPORT = {
+        "verdict": "request_changes",
+        "risk_level": "high",
+        "summary": "Fine.",
+        "findings": [],
+        "uncited": [],
+        "diff_coverage": {"percent": 100},
+        "stats": {"submitted": True},
+        "review_model": "m",
+    }
+
+    def test_model_text_cannot_inject_html_mentions_or_lines(self, sandbox):
+        finding = {
+            "severity": "high",
+            "file": "a.py",
+            "line": 3,
+            "title": "x\n**Gate risk:** none <img src=x>",
+            "rule_id": "SEC-1`\n@maintainer",
+            "source": "</details> @org/team",
+        }
+        body = self._comment(
+            sandbox,
+            {**self.REPORT, "summary": "<details> ping @maintainer", "findings": [finding]},
+        )
+
+        assert "<img" not in body and "<details> ping" not in body and "</details> @" not in body
+        # Outside code spans (which GitHub never turns into mentions) every @ is broken
+        assert "ping @maintainer" not in body and "@org" not in body
+        [finding_line] = [line for line in body.splitlines() if line.startswith("- ")]
+        assert "**Gate risk:** none" in finding_line  # inert text inside the finding line
+        assert "`SEC-1' @maintainer`" in finding_line.replace("\u200b", "")
+
+    def test_an_unsubmitted_review_shows_gate_risk_incomplete(self, sandbox):
+        body = self._comment(
+            sandbox, {**self.REPORT, "risk_level": None, "stats": {"submitted": False}}
+        )
+
+        assert "**Gate risk:** incomplete" in body
+        assert "Incomplete review" in body

@@ -23,6 +23,7 @@ def _finding(severity="high", file="api.py", line=2, citation="head", seen=True,
         suggestion=override.pop("suggestion", None),
         citation=citation,
         seen=seen,
+        **override,
     )
 
 
@@ -145,7 +146,7 @@ class TestFindings:
         md = _md(findings=[], verdict="approve")
 
         assert "## Findings (0)" in md
-        assert "No findings." in md
+        assert "No cited findings." in md
 
     @pytest.mark.parametrize(
         "citation, note",
@@ -185,6 +186,70 @@ class TestFindings:
         md = _md(findings=[_finding(file="`x.py")])
 
         assert "· `` `x.py:2 `` ·" in md
+
+
+class TestChannels:
+    def test_cited_finding_names_its_rule_and_quotes_its_evidence(self):
+        md = _md(
+            findings=[
+                _finding(
+                    rule_id="ASVS-8.2.1",
+                    source="OWASP ASVS 5.0 §8.2.1 (CC BY-SA 4.0)",
+                    evidence='+@router.post("/export")',
+                )
+            ],
+            risk_level=RiskLevel.HIGH,
+        )
+
+        assert "**Rule:** `ASVS-8.2.1` — OWASP ASVS 5.0 §8.2.1 (CC BY-SA 4.0)" in md
+        assert '```\n+@router.post("/export")\n```' in md
+        assert "**Gate risk:** high" in md
+
+    def test_no_uncited_section_without_uncited_observations(self):
+        assert "## Uncited observations" not in _md()
+
+    def test_invented_rule_id_is_called_out(self):
+        md = _md(
+            findings=[],
+            uncited=[_finding(rule_id="GHOST-1", source="x", uncited_reason="unknown_rule_id")],
+        )
+
+        assert (
+            "> ⚠ Cites rule `GHOST-1`, which is not in the configured corpus: "
+            "treat the citation as invented." in md
+        )
+
+    def test_an_invented_rule_id_cannot_break_out_of_its_code_span(self):
+        md = _md(
+            findings=[],
+            uncited=[
+                _finding(rule_id="X`\n# Approved", source="x", uncited_reason="unknown_rule_id")
+            ],
+        )
+
+        assert "> ⚠ Cites rule ``X` # Approved``, which is not in the configured corpus" in md
+        assert "\n# Approved" not in md
+
+    def test_failed_evidence_is_called_out(self):
+        md = _md(
+            findings=[],
+            uncited=[
+                _finding(
+                    rule_id="ASVS-8.2.1",
+                    source="OWASP ASVS 5.0 §8.2.1",
+                    evidence="not in the diff",
+                    uncited_reason="no_evidence",
+                )
+            ],
+        )
+
+        assert "but the evidence did not check out" in md
+
+    def test_plain_observation_carries_no_rule_notes(self):
+        md = _md(findings=[], uncited=[_finding(uncited_reason="no_rule")])
+
+        assert "treat the citation as invented" not in md
+        assert "evidence did not check out (cited line" not in md
 
 
 class TestHowItWent:
@@ -231,9 +296,18 @@ class TestWholeDocument:
         md = _md(
             diff_coverage=coverage,
             stats=stats,
+            risk_level=RiskLevel.HIGH,
             findings=[
-                _finding("low", citation="no_such_line", seen=False, title="Guess"),
                 _finding("high", suggestion="Keep 1."),
+            ],
+            uncited=[
+                _finding(
+                    "low",
+                    citation="no_such_line",
+                    seen=False,
+                    title="Guess",
+                    uncited_reason="no_rule",
+                ),
             ],
         )
 
@@ -244,13 +318,15 @@ class TestWholeDocument:
             "\n"
             "**Verdict:** request changes · claude-opus-4.6 · 2026-10-14T12:00:00\n"
             "\n"
+            "**Gate risk:** high — from cited findings only; uncited observations never gate.\n"
+            "\n"
             "> ⚠ Wrapped up early by the token budget: parts of the change may be unchecked.\n"
             "\n"
             "## Summary\n"
             "\n"
             "Changes get().\n"
             "\n"
-            "## Findings (2)\n"
+            "## Findings (1)\n"
             "\n"
             "### 1. ⚡ HIGH · `api.py:2` · Callers expect 1\n"
             "\n"
@@ -258,7 +334,12 @@ class TestWholeDocument:
             "\n"
             "**Suggestion:** Keep 1.\n"
             "\n"
-            "### 2. ✓ LOW · `api.py:2` · Guess\n"
+            "## Uncited observations (1)\n"
+            "\n"
+            "No rule card backs these (or their evidence did not check out). "
+            "Informational: they never flip a pass to a fail.\n"
+            "\n"
+            "### 1. ✓ LOW · `api.py:2` · Guess\n"
             "\n"
             "util.py compares get() with 1.\n"
             "\n"
@@ -284,6 +365,8 @@ class TestWholeDocument:
         assert (
             "**Verdict:** none · claude-opus-4.6 · 2026-10-14T12:00:00\n"
             "\n"
+            "**Gate risk:** incomplete — from cited findings only; uncited observations never gate.\n"
+            "\n"
             "> ⚠ **Incomplete review:** the model did not submit a review.\n"
             "\n"
             "## Summary\n"
@@ -292,7 +375,7 @@ class TestWholeDocument:
             "\n"
             "## Findings (0)\n"
             "\n"
-            "No findings.\n"
+            "No cited findings.\n"
             "\n"
             "## How the review went\n"
         ) in md

@@ -58,7 +58,7 @@ class TestMarkdownFormatter:
         assert "Is there rate limiting" in output
 
         # Metadata
-        assert "claude-sonnet-4-5-20250929" in output
+        assert "claude-sonnet-5-5" in output
         assert "5,423 tokens" in output
 
     def test_format_minimal_analysis(self, mock_minimal_analysis):
