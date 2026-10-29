@@ -388,9 +388,10 @@ class TestEntryPointRouting:
         (tmp_path / ".env").write_text("SEMANTIC_DIFF_RULES=./skills/compliance-review\n")
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("SEMANTIC_DIFF_RULES", raising=False)
+        monkeypatch.delenv("CI", raising=False)  # set when the suite itself runs in CI
         monkeypatch.setattr("sys.argv", ["semantic-diff", "review", "--help"])
         monkeypatch.setattr(
-            "semantic_diff.cli.load_dotenv", dotenv.load_dotenv
+            "semantic_diff.user_env.load_dotenv", dotenv.load_dotenv
         )  # conftest stubs it
         seen = {}
         # The group stays (route_args reads its commands); only its run is replaced

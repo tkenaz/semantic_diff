@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 import click
-from dotenv import find_dotenv, load_dotenv
 from rich.console import Console
 from rich.markdown import Markdown
 
@@ -28,6 +27,7 @@ from semantic_diff.review.agent import ReviewAgent, ReviewLimits
 from semantic_diff.review.corpus import RulesCorpus
 from semantic_diff.review.markdown import ReviewMarkdownFormatter
 from semantic_diff.review.tools import Toolbox
+from semantic_diff.user_env import load_user_env
 
 REPORTS_DIR_NAME = "semantic_diff_reports"
 
@@ -479,8 +479,7 @@ def cli():
     """Entry point that handles both commands and direct commit analysis."""
     # Before click parses: options with envvar= (SEMANTIC_DIFF_RULES, ...) read
     # os.environ then, so a .env loaded later by build_provider would be too late.
-    # usecwd: the user's .env, not one found next to the installed package
-    load_dotenv(find_dotenv(usecwd=True))
+    load_user_env()
     sys.argv = ["semantic-diff"] + route_args(sys.argv[1:])
     main()
 

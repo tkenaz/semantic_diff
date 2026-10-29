@@ -189,6 +189,10 @@ ANTHROPIC_API_KEY=sk-ant-...
 SEMANTIC_DIFF_MODEL=claude-sonnet-5-5  # or claude-opus-5-5
 ```
 
+In CI (`CI` set, as GitHub Actions and GitLab CI do) the `.env` file is never
+read: the working tree there is the change under review, so configure the job
+with CI variables instead.
+
 ### Model matters
 
 semantic-diff is exactly as good as the model under the hood. The tool packs

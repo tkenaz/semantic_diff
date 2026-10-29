@@ -103,8 +103,7 @@ def no_real_llm_credentials(monkeypatch):
         "OPENAI_BASE_URL",
     ):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr("semantic_diff.providers.factory.load_dotenv", lambda *a, **k: None)
-    monkeypatch.setattr("semantic_diff.cli.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr("semantic_diff.user_env.load_dotenv", lambda *a, **k: None)
 
 
 @pytest.fixture
