@@ -132,7 +132,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: tkenaz/semantic_diff@v0.3.0
+      - uses: tkenaz/semantic_diff@v0.4.0
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           comment_on_pr: true
@@ -157,7 +157,9 @@ call, and `fail_on_risk` reads the analysis's overall risk. With
 PR comment then shows the verdict, cited findings and uncited observations,
 and `fail_on_risk` reads **only the cited findings** (`risk_level` in the
 JSON): a review without cited findings reports `none` and never fails the
-check, however severe the uncited observations are. Point `rules_path` at a
+check, however severe the uncited observations are. A review the model never
+submitted (a limit cut it short) reports `incomplete` and fails any
+threshold: nothing checked means nothing passed. Point `rules_path` at a
 rule corpus checked out in the workspace, or every finding stays uncited and
 the reviewer is purely advisory. The action does not take an
 OpenAI-compatible gateway; for that, call the CLI from your own workflow
@@ -332,7 +334,8 @@ Picking the range for `mr` and `review`:
 | `--gitlab-env` | Read base, head, title and description from GitLab MR pipeline variables |
 
 `review` adds `--max-turns`, `--max-input-tokens` and `--rules` (see
-[Agentic review](#agentic-review)).
+[Agentic review](#agentic-review)), and `--transcript FILE`: the whole review
+conversation as JSON lines, for diagnosing a missed defect.
 
 ## Development
 
