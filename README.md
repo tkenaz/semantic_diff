@@ -273,6 +273,13 @@ semantic-diff review --gitlab-env --json   # inside a GitLab MR pipeline
   `ANTHROPIC_API_KEY`) and any OpenAI-compatible gateway
   (`SEMANTIC_DIFF_PROVIDER=openai`). Prompt caching is used on both, so each
   turn re-reads the conversation from cache.
+- `--gitlab-comment` posts the review to the merge request as one note and
+  edits that same note on every later run (it carries a hidden marker; only
+  notes by the token's own user are matched). The token comes from
+  `SEMANTIC_DIFF_GITLAB_TOKEN` (`CI_JOB_TOKEN` cannot write notes): a project
+  access token with the `api` scope and the Reporter role is enough. The note
+  shows the verdict and the cited findings; uncited ones are folded away as
+  unverified. Posting is advisory: if it fails, the job warns and goes on.
 
 #### Cited findings and the rule corpus
 
@@ -333,8 +340,8 @@ Picking the range for `mr` and `review`:
 | `--description-file PATH` | File with the MR description |
 | `--gitlab-env` | Read base, head, title and description from GitLab MR pipeline variables |
 
-`review` adds `--max-turns`, `--max-input-tokens` and `--rules` (see
-[Agentic review](#agentic-review)), and `--transcript FILE`: the whole review
+`review` adds `--max-turns`, `--max-input-tokens`, `--rules` and
+`--gitlab-comment` (see [Agentic review](#agentic-review)), and `--transcript FILE`: the whole review
 conversation as JSON lines, for diagnosing a missed defect.
 
 ## Development

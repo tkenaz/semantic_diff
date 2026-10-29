@@ -20,12 +20,14 @@ from semantic_diff.diff_pack import DEFAULT_BUDGET_TOKENS
 from semantic_diff.formatters.console_formatter import ConsoleFormatter
 from semantic_diff.formatters.markdown_formatter import MarkdownFormatter
 from semantic_diff.gitlab_env import gitlab_mr_context
+from semantic_diff.gitlab_note import MergeRequestNote, MergeRequestTarget, NoteError
 from semantic_diff.models import ChangeSet, FileChange
 from semantic_diff.parsers.git_parser import GitParser
 from semantic_diff.providers import build_provider
 from semantic_diff.review.agent import ReviewAgent, ReviewLimits
 from semantic_diff.review.corpus import RulesCorpus
 from semantic_diff.review.markdown import ReviewMarkdownFormatter
+from semantic_diff.review.mr_comment import MARKER, comment_body
 from semantic_diff.review.tools import Toolbox
 from semantic_diff.review.transcript import file_sink
 from semantic_diff.user_env import load_user_env
@@ -248,6 +250,12 @@ def mr_cmd(
     help="Write the whole review conversation here as JSON lines "
     "(it holds the diff and the code the reviewer read: keep it where the code may live)",
 )
+@click.option(
+    "--gitlab-comment",
+    is_flag=True,
+    help="Post the review as one MR note, updated in place on every run "
+    "(GitLab MR pipeline; token in SEMANTIC_DIFF_GITLAB_TOKEN; a failed post only warns)",
+)
 def review_cmd(
     base: Optional[str],
     head: Optional[str],
@@ -264,6 +272,7 @@ def review_cmd(
     max_diff_tokens: int,
     rules: Optional[Path],
     transcript: Optional[Path],
+    gitlab_comment: bool,
 ):
     """Review a merge request: an agent reads around the change and reports findings."""
     with _reported_errors(verbose):
@@ -309,6 +318,20 @@ def review_cmd(
         if save:
             saved_path = formatter.save(report, Path(parser.repo.working_dir) / REPORTS_DIR_NAME)
             click.echo(f"\nReport saved: {saved_path}", err=True)
+
+        if gitlab_comment:
+            _post_gitlab_comment(report)
+
+
+def _post_gitlab_comment(report) -> None:
+    """Advisory: the review is done and printed; a failed post must not cost it."""
+    try:
+        note = MergeRequestNote(MergeRequestTarget.from_env(os.environ))
+        outcome = note.upsert(comment_body(report), MARKER)
+    except (NoteError, ValueError, KeyError, TypeError) as e:
+        click.echo(f"Warning: MR comment not posted: {e}", err=True)
+        return
+    click.echo(f"MR comment {outcome}.", err=True)
 
 
 def _supports_tools(provider) -> bool:

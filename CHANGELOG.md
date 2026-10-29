@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `semantic-diff review --gitlab-comment`: posts the review to the GitLab
+  merge request as one note, updated in place on later runs (found by a
+  hidden marker among the token user's own notes). Token from
+  `SEMANTIC_DIFF_GITLAB_TOKEN`; project and MR from `CI_API_V4_URL`,
+  `CI_PROJECT_ID`, `CI_MERGE_REQUEST_IID`. Cited findings in full, uncited
+  ones folded as unverified. Model text cannot mention people, inject HTML
+  or start a line with `/` (a GitLab quick action). A failed post is a
+  warning, never a failed job.
+
 ## [0.4.0] - 2026-10-29
 
 ### Changed (breaking)
