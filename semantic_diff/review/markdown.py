@@ -99,7 +99,7 @@ def _ranked(findings: List[Finding]) -> List[Finding]:
 
 def _finding(number: int, finding: Finding) -> List[str]:
     icon = MarkdownFormatter.RISK_ICONS[finding.severity]
-    where = _code(f"{finding.file}:{finding.line}")
+    where = code_span(f"{finding.file}:{finding.line}")
     lines = [
         f"### {number}. {icon} {finding.severity.value.upper()} · {where} · "
         f"{escape_md(finding.title)}",
@@ -108,7 +108,7 @@ def _finding(number: int, finding: Finding) -> List[str]:
         "",
     ]
     if finding.rule_id and finding.uncited_reason is None:
-        lines += [f"**Rule:** {_code(finding.rule_id)} — {escape_md(finding.source or '')}", ""]
+        lines += [f"**Rule:** {code_span(finding.rule_id)} — {escape_md(finding.source or '')}", ""]
     if finding.evidence:
         fence = "`" * max(
             3, max((len(run) for run in re.findall(r"`+", finding.evidence)), default=0) + 1
@@ -132,7 +132,7 @@ def _notes(finding: Finding) -> List[str]:
         notes.append("⚠ The reviewer never opened this file: treat this finding as a guess.")
     if finding.uncited_reason == "unknown_rule_id":
         notes.append(
-            f"⚠ Cites rule {_code(finding.rule_id or '')}, which is not in the configured "
+            f"⚠ Cites rule {code_span(finding.rule_id or '')}, which is not in the configured "
             "corpus: treat the citation as invented."
         )
     if finding.uncited_reason == "no_evidence" and finding.rule_id:
@@ -165,7 +165,7 @@ def _how_it_went(report: ReviewReport) -> List[str]:
     return lines + [""]
 
 
-def _code(location: str) -> str:
+def code_span(location: str) -> str:
     # CommonMark: a span opened by N backticks closes only at a run of exactly N,
     # and a backtick at either edge needs a space against the fence. One line
     # only: a newline would let model-written text (a rule id) start a new block.

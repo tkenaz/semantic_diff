@@ -11,11 +11,18 @@ import pytest
 from click.testing import CliRunner
 
 from semantic_diff.cli import main
+from semantic_diff.gitlab_note import TOKEN_VARIABLE, NoteError
 from semantic_diff.providers import AnthropicProvider, RetryingProvider, ToolResult
 from tests.test_cli_mr import _gitlab_env
 from tests.test_review_agent import ScriptedProvider, call, submit, uses
 
 RANGE = ["--base", "target", "--head", "feature"]
+NOTE_ENV = {
+    "CI_API_V4_URL": "https://gitlab.example.org/api/v4",
+    "CI_PROJECT_ID": "42",
+    "CI_MERGE_REQUEST_IID": "5",
+    TOKEN_VARIABLE: "fixture-token",
+}
 
 
 @pytest.fixture
@@ -111,6 +118,39 @@ class TestReview:
 
         assert result.exit_code == 0, result.output
         assert json.loads(result.stdout)["change_set"]["title"] == "fix(platform): AHUB-7 return 3"
+
+    def test_gitlab_comment_posts_the_review_after_printing_it(self, mr_repo, model):
+        with patch("semantic_diff.cli.MergeRequestNote") as note:
+            note.return_value.upsert.return_value = "created"
+            result = _review(mr_repo, "--json", "--gitlab-comment", env=NOTE_ENV)
+
+        assert result.exit_code == 0, result.output
+        json.loads(result.stdout)
+        body, marker = note.return_value.upsert.call_args.args
+        assert body.startswith(marker)
+        assert "Callers expect 1" in body
+        assert "MR comment created." in result.stderr
+
+    def test_a_failed_comment_only_warns(self, mr_repo, model):
+        with patch("semantic_diff.cli.MergeRequestNote") as note:
+            note.return_value.upsert.side_effect = NoteError("POST /notes: HTTP 403")
+            result = _review(mr_repo, "--json", "--gitlab-comment", env=NOTE_ENV)
+
+        assert result.exit_code == 0, result.output
+        assert "Warning: MR comment not posted: POST /notes: HTTP 403" in result.stderr
+        json.loads(result.stdout)
+
+    def test_a_comment_without_its_variables_only_warns(self, mr_repo, model):
+        result = _review(mr_repo, "--json", "--gitlab-comment", env={TOKEN_VARIABLE: ""})
+
+        assert result.exit_code == 0, result.output
+        assert "MR comment not posted: not set:" in result.stderr
+
+    def test_no_comment_without_the_flag(self, mr_repo, model):
+        with patch("semantic_diff.cli.MergeRequestNote") as note:
+            _review(mr_repo, "--json", env=NOTE_ENV)
+
+        note.assert_not_called()
 
     def test_model_flag_reaches_the_provider(self, mr_repo, model):
         _review(mr_repo, "--model", "claude-opus-4.6")
