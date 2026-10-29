@@ -5,6 +5,7 @@ where a review spent its turns - the report only says how many it spent.
 """
 
 import json
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Callable, Sequence
@@ -26,6 +27,10 @@ def transcript_lines(system: str, messages: Sequence[Message]) -> list:
 def file_sink(path: Path) -> TranscriptSink:
     def write(system: str, messages: Sequence[Message]) -> None:
         rows = (json.dumps(line, ensure_ascii=False) for line in transcript_lines(system, messages))
-        path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        try:
+            path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        except OSError as e:
+            # A diagnostic file never costs the review it records, or hides its error
+            print(f"warning: transcript not written to {path}: {e}", file=sys.stderr)
 
     return write

@@ -4,6 +4,7 @@ tools until it submits a review, within hard limits on turns and tokens.
 The provider is scripted; the toolbox is real, over a real git repository.
 """
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +35,7 @@ from semantic_diff.review.agent import (
 from semantic_diff.review.corpus import RulesCorpus
 from semantic_diff.review.report import Finding, ReviewStats
 from semantic_diff.review.tools import Toolbox
+from semantic_diff.review.transcript import file_sink
 from tests.conftest import _commit
 
 NOW = datetime(2026, 10, 14, 12, 0, 0)
@@ -1107,3 +1109,18 @@ class TestRulesCorpus:
         )
 
         assert RulesCorpus(root).sources == {"A-1": "", "A-2": "Spec §2"}
+
+
+class TestFileSink:
+    def test_writes_one_json_line_per_message(self, tmp_path):
+        path = tmp_path / "t.jsonl"
+
+        file_sink(path)("sys", [UserMessage("hi")])
+
+        lines = [json.loads(line) for line in path.read_text().splitlines()]
+        assert [line["role"] for line in lines] == ["system", "user"]
+
+    def test_a_write_failure_warns_and_never_raises(self, tmp_path, capsys):
+        file_sink(tmp_path / "missing" / "t.jsonl")("sys", [])
+
+        assert "transcript not written" in capsys.readouterr().err
