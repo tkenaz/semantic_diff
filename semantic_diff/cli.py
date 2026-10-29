@@ -24,8 +24,10 @@ from semantic_diff.models import ChangeSet, FileChange
 from semantic_diff.parsers.git_parser import GitParser
 from semantic_diff.providers import build_provider
 from semantic_diff.review.agent import ReviewAgent, ReviewLimits
+from semantic_diff.review.corpus import RulesCorpus
 from semantic_diff.review.markdown import ReviewMarkdownFormatter
 from semantic_diff.review.tools import Toolbox
+from semantic_diff.user_env import load_user_env
 
 REPORTS_DIR_NAME = "semantic_diff_reports"
 
@@ -231,6 +233,13 @@ def mr_cmd(
     envvar="SEMANTIC_DIFF_REVIEW_DIFF_TOKENS",
     help="Diff shown up front; the agent reads the rest on demand",
 )
+@click.option(
+    "--rules",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    envvar="SEMANTIC_DIFF_RULES",
+    help="Rule corpus directory (INDEX.md + rules/*.md); enables cited findings",
+)
 def review_cmd(
     base: Optional[str],
     head: Optional[str],
@@ -245,6 +254,7 @@ def review_cmd(
     max_turns: int,
     max_input_tokens: int,
     max_diff_tokens: int,
+    rules: Optional[Path],
 ):
     """Review a merge request: an agent reads around the change and reports findings."""
     with _reported_errors(verbose):
@@ -258,11 +268,17 @@ def review_cmd(
         provider = build_provider(model=model)
         if not _supports_tools(provider):
             raise ValueError(
-                "The configured provider does not support tool calling, which review needs. "
-                "Use an OpenAI-compatible gateway: SEMANTIC_DIFF_PROVIDER=openai"
+                "The configured provider does not support tool calling, which review needs."
             )
+        corpus = RulesCorpus(rules) if rules else None
         if verbose:
             click.echo(f"Reviewing {len(files)} changed files with {provider.model}...", err=True)
+            if corpus:
+                click.echo(
+                    f"Rule corpus: {rules} ({len(corpus.rule_ids)} cards in "
+                    f"{len(corpus.rule_files)} files)",
+                    err=True,
+                )
 
         limits = ReviewLimits(
             max_turns=max_turns,
@@ -270,7 +286,7 @@ def review_cmd(
             diff_budget_tokens=max_diff_tokens,
         )
         toolbox = Toolbox(parser.repo, head=change_set.head_sha, base=change_set.base_sha)
-        report = ReviewAgent(provider, toolbox, limits).review(change_set, files)
+        report = ReviewAgent(provider, toolbox, limits, corpus=corpus).review(change_set, files)
 
         formatter = ReviewMarkdownFormatter()
         if output_json:
@@ -461,6 +477,9 @@ def route_args(args: List[str]) -> List[str]:
 
 def cli():
     """Entry point that handles both commands and direct commit analysis."""
+    # Before click parses: options with envvar= (SEMANTIC_DIFF_RULES, ...) read
+    # os.environ then, so a .env loaded later by build_provider would be too late.
+    load_user_env()
     sys.argv = ["semantic-diff"] + route_args(sys.argv[1:])
     main()
 

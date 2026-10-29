@@ -105,8 +105,11 @@ before reading fields.
 | `.author` | `.change_set.authors[]` |
 | `.date` | `.change_set.date` (null for merge requests) |
 
-`semantic-diff review --json` has its own schema (`schema_version` 1). See
-[CHANGELOG.md](CHANGELOG.md) for details.
+`semantic-diff review --json` has its own schema (`schema_version` 2):
+findings are split into `findings` (cited: backed by a rule card and by
+evidence that checked out) and `uncited` (informational observations), and
+`risk_level` carries the worst severity among the cited findings — the only
+value a CI gate should read. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ### GitHub Action
 
@@ -139,16 +142,26 @@ jobs:
 | Input | Default | |
 |-------|---------|---|
 | `anthropic_api_key` | - | Required |
-| `model` | `claude-sonnet-5-5` | Any Anthropic model id |
+| `model` | `claude-sonnet-5-5` | Any Anthropic model id (`claude-opus-5-5` for deeper reviews) |
 | `comment_on_pr` | `true` | Post (or update) one PR comment |
 | `fail_on_risk` | `never` | `low`, `medium`, `high`, `critical` or `never` |
+| `review` | `false` | Run the agentic reviewer on pull requests (see below) |
+| `rules_path` | - | Rule corpus checkout (`INDEX.md` + `rules/*.md`) for cited findings |
 | `base_ref` | PR base | Override the base to compare against |
 
-Outputs: `risk_level`, `analysis_json`, `report_path`.
+Outputs: `risk_level`, `verdict` (review mode), `analysis_json`, `report_path`.
 
-The action runs `semantic-diff mr` against Anthropic. It does not run the
-agentic `review` and does not take an OpenAI-compatible gateway; for those,
-call the CLI from your own workflow step.
+By default the action runs `semantic-diff mr` against Anthropic: one LLM
+call, and `fail_on_risk` reads the analysis's overall risk. With
+`review: true` it runs the agentic `review` on pull requests instead; the
+PR comment then shows the verdict, cited findings and uncited observations,
+and `fail_on_risk` reads **only the cited findings** (`risk_level` in the
+JSON): a review without cited findings reports `none` and never fails the
+check, however severe the uncited observations are. Point `rules_path` at a
+rule corpus checked out in the workspace, or every finding stays uncited and
+the reviewer is purely advisory. The action does not take an
+OpenAI-compatible gateway; for that, call the CLI from your own workflow
+step.
 
 ## Example Output
 
@@ -175,6 +188,10 @@ ANTHROPIC_API_KEY=sk-ant-...
 # Optional
 SEMANTIC_DIFF_MODEL=claude-sonnet-5-5  # or claude-opus-5-5
 ```
+
+In CI (`CI` set, as GitHub Actions and GitLab CI do) the `.env` file is never
+read: the working tree there is the change under review, so configure the job
+with CI variables instead.
 
 ### Model matters
 
@@ -250,9 +267,34 @@ semantic-diff review --gitlab-env --json   # inside a GitLab MR pipeline
 - Each finding is checked in code: does the cited line exist (after the
   change, or only before it), and did the model actually see the file. The
   report flags findings that fail either check.
-- Needs a provider with tool calling: `SEMANTIC_DIFF_PROVIDER=openai`
-  (any OpenAI-compatible gateway). Prompt caching is used where the gateway
-  supports it, so each turn re-reads the conversation from cache.
+- Works with both providers: Anthropic (the default; just
+  `ANTHROPIC_API_KEY`) and any OpenAI-compatible gateway
+  (`SEMANTIC_DIFF_PROVIDER=openai`). Prompt caching is used on both, so each
+  turn re-reads the conversation from cache.
+
+#### Cited findings and the rule corpus
+
+The review's output has two channels. `findings` holds **cited** findings:
+each one names a rule card (`rule_id` + its `source` line, copied verbatim
+from the card) and quotes the diff line(s) it rests on as `evidence`.
+Everything else - observations no card covers, citations of cards that do
+not exist, findings whose evidence did not check out - lands in `uncited`,
+with honest severity, as information for the reviewer. Only cited findings
+feed `risk_level`, the value CI gates read; uncited observations never flip
+a pass to a fail.
+
+Point `--rules` (env `SEMANTIC_DIFF_RULES`) at a corpus directory holding
+`INDEX.md` (a signal → tags table) and `rules/*.md` (atomic cards headed
+`### [ID] Title` with a `source:` line, citing a public standard such as
+OWASP ASVS or GDPR). The model gets `INDEX.md` up front and
+loads only the rule files the diff's signals earn (a `read_rules` tool);
+every submitted `rule_id` is verified against the corpus in code, so an
+invented citation is demoted to `uncited` and flagged. Without `--rules`
+every finding is uncited and the review is advisory - nothing gates.
+
+```bash
+semantic-diff review --base origin/dev --rules ./skills/compliance-review --save
+```
 
 ## Commands
 
@@ -262,7 +304,7 @@ semantic-diff review --gitlab-env --json   # inside a GitLab MR pipeline
 | `semantic-diff <hash>` | Analyze specific commit (long form: `semantic-diff analyze <hash>`) |
 | `semantic-diff mr --base origin/main` | Analyze a whole merge request (merge-base..HEAD) |
 | `semantic-diff mr --gitlab-env` | Same, inside a GitLab MR pipeline (reads `CI_MERGE_REQUEST_*`) |
-| `semantic-diff review --base origin/main` | Agentic review of a merge request (see above; `openai` provider only) |
+| `semantic-diff review --base origin/main` | Agentic review of a merge request (see above) |
 | `semantic-diff init` | Install pre-push hook |
 | `semantic-diff uninstall` | Remove pre-push hook |
 
@@ -289,7 +331,7 @@ Picking the range for `mr` and `review`:
 | `--description-file PATH` | File with the MR description |
 | `--gitlab-env` | Read base, head, title and description from GitLab MR pipeline variables |
 
-`review` adds `--max-turns` and `--max-input-tokens` (see
+`review` adds `--max-turns`, `--max-input-tokens` and `--rules` (see
 [Agentic review](#agentic-review)).
 
 ## Development

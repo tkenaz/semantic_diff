@@ -3,9 +3,11 @@ Tests for CLI interface
 """
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import dotenv
 import pytest
 from click.testing import CliRunner
 from git import Repo
@@ -380,6 +382,26 @@ class TestEntryPointRouting:
     def test_every_registered_command_is_routed_as_itself(self):
         for name in main.commands:
             assert route_args([name]) == [name]
+
+    def test_console_script_loads_dotenv_before_options_are_parsed(self, tmp_path, monkeypatch):
+        # --rules reads SEMANTIC_DIFF_RULES while click parses; .env must be loaded by then
+        (tmp_path / ".env").write_text("SEMANTIC_DIFF_RULES=./skills/compliance-review\n")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("SEMANTIC_DIFF_RULES", raising=False)
+        monkeypatch.delenv("CI", raising=False)  # set when the suite itself runs in CI
+        monkeypatch.setattr("sys.argv", ["semantic-diff", "review", "--help"])
+        monkeypatch.setattr(
+            "semantic_diff.user_env.load_dotenv", dotenv.load_dotenv
+        )  # conftest stubs it
+        seen = {}
+        # The group stays (route_args reads its commands); only its run is replaced
+        monkeypatch.setattr(
+            main, "main", lambda *a, **k: seen.update(rules=os.environ.get("SEMANTIC_DIFF_RULES"))
+        )
+
+        cli()
+
+        assert seen["rules"] == "./skills/compliance-review"
 
     def test_console_script_runs_mr(self, mr_repo, monkeypatch, capsys):
         monkeypatch.setattr("sys.argv", ["semantic-diff", "mr", "--repo", mr_repo["path"]])

@@ -6,10 +6,9 @@ Adding a protocol = one adapter module + one entry in PROVIDERS.
 import os
 from typing import Callable, Dict, Optional
 
-from dotenv import load_dotenv
-
 from semantic_diff.providers.base import LLMProvider
 from semantic_diff.providers.retrying import RetryingProvider
+from semantic_diff.user_env import load_user_env
 
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5"
 # Long answers on big merge requests take minutes. An explicit timeout also lifts the
@@ -63,7 +62,7 @@ PROVIDERS: Dict[str, Callable[[Optional[str]], LLMProvider]] = {
 
 def build_provider(model: Optional[str] = None, *, load_env: bool = True) -> RetryingProvider:
     if load_env:
-        load_dotenv()
+        load_user_env()
     name = os.getenv("SEMANTIC_DIFF_PROVIDER", "anthropic")
     if name not in PROVIDERS:
         raise ValueError(f"Unknown provider '{name}'. Known: {', '.join(PROVIDERS)}")

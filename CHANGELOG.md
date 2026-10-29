@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+- `semantic-diff review --json` schema is now `schema_version` 2 (KEN-315):
+  findings are split into two channels. `findings` holds only **cited**
+  findings — backed by a rule card from a configured corpus (`rule_id`
+  verified in code against the corpus, brackets and stray spaces ignored;
+  `source` is printed from the card itself, not from the model; a card
+  without a `source:` line gives none, so it never gates) and by evidence
+  that checked out (the cited line exists, the file was seen, the quoted
+  `evidence` is in the diff within a few lines of the cited line, with or
+  without the line-number prefix the model was shown, and holds at least six
+  letters or digits — `}` proves nothing). Everything else lands in `uncited` with
+  honest severity: observations without a card, invented rule ids, findings
+  whose evidence failed a check. New top-level `risk_level` carries the worst
+  severity among cited findings (null without any) — the only value a CI gate
+  should read; `uncited` never flips a pass to a fail.
+- The review Markdown report gained a `Gate risk` line (`incomplete` when the
+  model never submitted), a `Rule:` line and the
+  quoted evidence on cited findings, and an `Uncited observations` section.
+
+### Added
+- Tool calling (`converse`) on the Anthropic adapter, with prompt caching and
+  merged tool results — `semantic-diff review` now runs against the default
+  Anthropic provider (`ANTHROPIC_API_KEY`), not only OpenAI-compatible
+  gateways. This is what lets the GitHub Action run the reviewer.
+- `semantic-diff review --rules DIR` (env `SEMANTIC_DIFF_RULES`): a rule
+  corpus (`INDEX.md` + `rules/*.md`, cards headed `### [ID] ...`). INDEX.md is
+  shown to the model up front, rule files load on demand through a `read_rules`
+  tool, and submitted rule ids are verified against the corpus.
+- GitHub Action: `review: true` runs the agentic reviewer on pull requests
+  (new inputs `review` and `rules_path`, new output `verdict`); the PR comment
+  shows the verdict, cited findings and uncited observations, and
+  `fail_on_risk` reads cited findings only. The risk-threshold step now treats
+  `none` as never failing and rejects unknown thresholds loudly (and no longer
+  needs bash 4). A review the model never submitted (a turn, token or context
+  limit cut it short) reports `risk_level` output `incomplete` and fails any
+  `fail_on_risk` threshold: nothing checked means nothing passed. Model text in
+  the PR comment is escaped (no HTML, no @-mentions, one-line fields stay on
+  one line).
+
+### Fixed
+- A model the endpoint does not serve (404: retired, not enabled for the key,
+  or a wrong base URL) raises `ModelUnavailableError`, which names the model,
+  says how to pick another and keeps the endpoint's own message. Never retried,
+  never swapped for another model.
+- `.env` is now found in the current directory (the analyzed repository), not
+  searched upward from the installed package, so it works for `pip install`
+  users and not only for editable checkouts; it is also loaded before options
+  are parsed, so `.env`-only settings such as `SEMANTIC_DIFF_RULES` and
+  `SEMANTIC_DIFF_MAX_DIFF_TOKENS` take effect. In CI (`CI` set) `.env` is never
+  read: the working tree is the change under review, and a `.env` committed
+  in a pull request could otherwise point `ANTHROPIC_BASE_URL` at another host
+  and receive the API key.
+- GitHub Action used as a local action (`uses: ./`) installed the CLI from
+  `main` instead of the checkout it runs from; it now installs its own code.
+- Test fixtures and docs referenced a previous-generation model id; defaults
+  and examples now consistently use `claude-sonnet-5-5` (with
+  `claude-opus-5-5` called out for deeper reviews).
+
 ## [0.3.0] - 2026-10-14
 
 ### Changed (breaking)

@@ -558,10 +558,15 @@ class TestBuildProvider:
 
     def test_loads_dotenv_by_default(self):
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "k"}, clear=True):
-            with patch("semantic_diff.providers.factory.load_dotenv") as load_dotenv:
+            with (
+                patch("semantic_diff.user_env.load_dotenv") as load_dotenv,
+                patch("semantic_diff.user_env.find_dotenv", return_value="x/.env") as find,
+            ):
                 build_provider()
 
-        load_dotenv.assert_called_once_with()
+        # the .env of the analyzed repository, not one next to the installed package
+        find.assert_called_once_with(usecwd=True)
+        load_dotenv.assert_called_once_with("x/.env")
 
     def test_openai_provider_without_sdk_explains_the_extra(self):
         env = {

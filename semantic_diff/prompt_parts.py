@@ -4,7 +4,7 @@ rendering; author-provided text is fenced as untrusted.
 """
 
 import re
-from typing import List
+from typing import Iterator, List, Optional, Tuple
 
 from semantic_diff.diff_pack import DiffPack
 from semantic_diff.models import ChangeSet, FileChange
@@ -80,6 +80,34 @@ def format_diffs(packed: DiffPack, numbered: bool = False) -> str:
 HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 
+def diff_lines(diff: str) -> Iterator[Tuple[str, Optional[str]]]:
+    """
+    Each diff line with the number it is shown under: "42" after the change
+    (context and added lines), "b17" before it (removed ones), "" for a
+    "\\ No newline" marker inside a hunk, None outside any hunk.
+    """
+    old = new = None
+    for line in diff.split("\n"):
+        header = HUNK_HEADER.match(line)
+        if header:
+            old, new = int(header.group(1)), int(header.group(2))
+            yield line, None
+        elif new is None:
+            yield line, None
+        elif line.startswith("\\"):
+            yield line, ""
+        elif line.startswith("-"):
+            yield line, f"b{old}"
+            old += 1
+        elif line.startswith("+"):
+            yield line, str(new)
+            new += 1
+        else:
+            yield line, str(new)
+            old += 1
+            new += 1
+
+
 def number_lines(diff: str) -> str:
     """
     Prefix diff lines with their line number: after the change for context and
@@ -87,24 +115,13 @@ def number_lines(diff: str) -> str:
     packing, so the budget does not count the prefixes.
     """
     out = []
-    old = new = None
-    for line in diff.split("\n"):
-        header = HUNK_HEADER.match(line)
-        if header:
-            old, new = int(header.group(1)), int(header.group(2))
+    for line, number in diff_lines(diff):
+        if number is None:
             out.append(line)
-        elif new is None or line.startswith("\\"):
-            out.append(line if new is None else f"{'':>6}{line}")
-        elif line.startswith("-"):
-            out.append(f"{'b' + str(old):>5}|{line}")
-            old += 1
-        elif line.startswith("+"):
-            out.append(f"{new:>5}|{line}")
-            new += 1
+        elif not number:
+            out.append(f"{'':>6}{line}")
         else:
-            out.append(f"{new:>5}|{line}")
-            old += 1
-            new += 1
+            out.append(f"{number:>5}|{line}")
     return "\n".join(out)
 
 
