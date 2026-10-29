@@ -352,6 +352,7 @@ class TestWholeDocument:
             "- 12 turns, 17 tool calls\n"
             "- Tokens: 209,624 in (167,571 read from cache, 42,039 written to cache), 4,201 out\n"
             "- Files read: none beyond the diff\n"
+            "- Redaction: off: the model saw secrets and personal data as written\n"
             "- Diff coverage: 25% of changed lines shown up front (budget 10 tokens)\n"
             "  - Trimmed to whole hunks: a.py\n"
             "  - Not shown up front: big.py\n"

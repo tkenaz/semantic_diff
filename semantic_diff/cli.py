@@ -24,6 +24,7 @@ from semantic_diff.gitlab_note import MergeRequestNote, MergeRequestTarget, Note
 from semantic_diff.models import ChangeSet, FileChange
 from semantic_diff.parsers.git_parser import GitParser
 from semantic_diff.providers import build_provider
+from semantic_diff.redaction import Redactor
 from semantic_diff.review.agent import ReviewAgent, ReviewLimits
 from semantic_diff.review.corpus import RulesCorpus
 from semantic_diff.review.markdown import ReviewMarkdownFormatter
@@ -251,6 +252,13 @@ def mr_cmd(
     "(it holds the diff and the code the reviewer read: keep it where the code may live)",
 )
 @click.option(
+    "--redact/--no-redact",
+    default=True,
+    show_default=True,
+    help="Erase secrets and personal data (pii-eraser, code profile) from the diff, "
+    "title, description and every file the reviewer reads, before the model sees them",
+)
+@click.option(
     "--gitlab-comment",
     is_flag=True,
     help="Post the review as one MR note, updated in place on every run "
@@ -272,6 +280,7 @@ def review_cmd(
     max_diff_tokens: int,
     rules: Optional[Path],
     transcript: Optional[Path],
+    redact: bool,
     gitlab_comment: bool,
 ):
     """Review a merge request: an agent reads around the change and reports findings."""
@@ -282,6 +291,10 @@ def review_cmd(
         if change_set is None or not files:
             click.echo("No changes found.", err=True)
             sys.exit(0)
+
+        redactor = Redactor() if redact else None
+        if redactor:
+            change_set, files = redactor.change(change_set, files)
 
         provider = build_provider(model=model)
         if not _supports_tools(provider):
@@ -303,11 +316,15 @@ def review_cmd(
             max_input_tokens=max_input_tokens,
             diff_budget_tokens=max_diff_tokens,
         )
-        toolbox = Toolbox(parser.repo, head=change_set.head_sha, base=change_set.base_sha)
+        toolbox = Toolbox(
+            parser.repo, head=change_set.head_sha, base=change_set.base_sha, redactor=redactor
+        )
         sink = file_sink(transcript) if transcript else None
         report = ReviewAgent(provider, toolbox, limits, corpus=corpus, transcript=sink).review(
             change_set, files
         )
+        if redactor:
+            report.stats.redacted = redactor.erased
 
         formatter = ReviewMarkdownFormatter()
         if output_json:

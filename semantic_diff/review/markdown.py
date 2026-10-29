@@ -152,6 +152,7 @@ def _how_it_went(report: ReviewReport) -> List[str]:
         f"- Tokens: {stats.input_tokens:,} in ({stats.cache_read_tokens:,} read from cache, "
         f"{stats.cache_write_tokens:,} written to cache), {stats.output_tokens:,} out",
         f"- Files read: {files}",
+        *_redacted(stats),
         f"- Diff coverage: {cov.percent}% of changed lines shown up front "
         f"(budget {cov.budget_tokens:,} tokens)",
     ]
@@ -163,6 +164,12 @@ def _how_it_went(report: ReviewReport) -> List[str]:
         if paths:
             lines.append(f"  - {label}: {', '.join(escape_path(p) for p in paths)}")
     return lines + [""]
+
+
+def _redacted(stats) -> List[str]:
+    if stats.redacted is None:
+        return ["- Redaction: off: the model saw secrets and personal data as written"]
+    return [f"- Redaction: {stats.redacted} value(s) erased before the model saw them"]
 
 
 def code_span(location: str) -> str:

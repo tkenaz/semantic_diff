@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "semantic-diff"
-version = "0.5.1"
+version = "0.5.2"
 description = "AI-powered semantic analysis and agentic review of git commits and merge requests"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,6 +27,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "gitpython>=3.1.58",  # CVE-2026-42215, -44243 and later fixes
     "pydantic>=2.0.0",
+    "pii-eraser>=0.1.1",  # secrets erased before the review reaches a model
 ]
 
 [project.optional-dependencies]

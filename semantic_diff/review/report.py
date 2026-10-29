@@ -77,6 +77,7 @@ class ReviewStats(BaseModel):
     files_read: List[str] = Field(default_factory=list)
     submitted: bool = False
     limit_hit: Optional[Limit] = None  # the review was wrapped up early by this limit
+    redacted: Optional[int] = None  # values erased before the model saw them; None: off
 
 
 class ReviewReport(BaseModel):

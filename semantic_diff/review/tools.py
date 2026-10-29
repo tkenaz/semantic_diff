@@ -14,6 +14,7 @@ from typing import Any, List, Optional, Tuple
 from git import GitCommandError, Repo
 
 from semantic_diff.providers import ToolCall, ToolResult, ToolSpec
+from semantic_diff.redaction import Redactor
 
 LINE_CUT = 300
 
@@ -97,6 +98,7 @@ class Toolbox:
         max_matches: int = 100,
         max_entries: int = 300,
         git_timeout: float = 20.0,
+        redactor: Optional[Redactor] = None,
     ):
         self.repo = repo
         self.head = head
@@ -106,6 +108,8 @@ class Toolbox:
         self.max_matches = max_matches
         self.max_entries = max_entries
         self.git_timeout = git_timeout
+        # File text, grep hits and commit subjects are erased before numbering
+        self.redactor = redactor
 
     @property
     def specs(self) -> Tuple[ToolSpec, ...]:
@@ -162,7 +166,7 @@ class Toolbox:
             raise ToolError(f"grep failed: {stderr}") from e
 
         prefix = f"{self.head}:"
-        matches = [_cut(line.removeprefix(prefix)) for line in out.splitlines()]
+        matches = [_cut(self._erased_hit(line.removeprefix(prefix))) for line in out.splitlines()]
         shown = matches[: self.max_matches]
         if len(shown) < len(matches):
             shown.append(
@@ -195,7 +199,9 @@ class Toolbox:
             path,
             kill_after_timeout=self.git_timeout,
         )
-        return out or f"no commits touch {path}"
+        if not out:
+            return f"no commits touch {path}"
+        return self.redactor(out) if self.redactor else out
 
     # --- helpers -------------------------------------------------------------
 
@@ -214,7 +220,18 @@ class Toolbox:
         data = blob.data_stream.read()
         if b"\0" in data[:8000]:
             raise ToolError(f"{path} is a binary file")
-        return data.decode("utf-8", errors="replace").splitlines()
+        text = data.decode("utf-8", errors="replace")
+        return self.redactor.lines(text) if self.redactor else text.splitlines()
+
+    def _erased_hit(self, hit: str) -> str:
+        """path:line:text - only the text is a file's content"""
+        if not self.redactor:
+            return hit
+        path, sep, rest = hit.partition(":")
+        number, sep2, text = rest.partition(":")
+        if not (sep and sep2 and number.isdigit()):
+            return self.redactor(hit)
+        return f"{path}:{number}:{self.redactor(text)}"
 
     def _object(self, side: str, sha: str, path: str):
         tree = self.repo.commit(sha).tree

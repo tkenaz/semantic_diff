@@ -132,7 +132,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: tkenaz/semantic_diff@v0.5.1
+      - uses: tkenaz/semantic_diff@v0.5.2
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           comment_on_pr: true
@@ -273,6 +273,12 @@ semantic-diff review --gitlab-env --json   # inside a GitLab MR pipeline
   `ANTHROPIC_API_KEY`) and any OpenAI-compatible gateway
   (`SEMANTIC_DIFF_PROVIDER=openai`). Prompt caching is used on both, so each
   turn re-reads the conversation from cache.
+- Secrets and personal data are erased before the model sees them (on by
+  default; `--no-redact` turns it off): the diff, title, description, commit
+  subjects and everything the tools read go through one
+  [pii-eraser](https://github.com/tkenaz/pii-eraser) session, so a value
+  keeps one placeholder everywhere and line numbers still hold. The report
+  says how many values were erased. `mr` and `analyze` do not redact yet.
 - `--gitlab-comment` posts the review to the merge request as one note and
   edits that same note on every later run (it carries a hidden marker; only
   notes by the token's own user are matched). The token comes from

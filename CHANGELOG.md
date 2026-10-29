@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-29
+
+### Security
+- `semantic-diff review` erases secrets and personal data before the model
+  sees them (`--redact`, on by default; `--no-redact` to opt out): the diff,
+  the title, the description, commit subjects, and everything `read_file`,
+  `read_base`, `grep` and `git_log` return, through one pii-eraser session
+  so a value keeps one placeholder everywhere. Line numbers hold, so
+  citations and the evidence check work on the erased text. The report
+  counts the erased values (`stats.redacted`; `null` when off). A diff
+  gate in front of the job (`pii-eraser --fail-on-secret`) is no longer
+  needed to keep secrets from the model, so an MR touching fixture secrets
+  can still be reviewed. pii-eraser is now a dependency.
+- MR and PR comments no longer render links or images from model-written
+  text: `[..](..)` and `![..](..)` lose their brackets, bare URLs their
+  scheme separator. A prompt-injected diff could otherwise put links or a
+  tracking image into a note under the token owner's name.
+
 ## [0.5.1] - 2026-10-29
 
 ### Changed
@@ -205,7 +223,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Retry logic for API calls
 - Pydantic models for structured analysis
 
-[Unreleased]: https://github.com/tkenaz/semantic_diff/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/tkenaz/semantic_diff/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/tkenaz/semantic_diff/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/tkenaz/semantic_diff/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/tkenaz/semantic_diff/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/tkenaz/semantic_diff/compare/v0.3.0...v0.4.0
