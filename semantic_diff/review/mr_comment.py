@@ -5,8 +5,9 @@ uncited, the rest folded away. A hidden marker lets the
 next run find the comment and update it instead of adding another.
 
 Everything the model wrote may quote the author's content, and a comment is
-read by the forge, not only by people: no HTML, no @-mentions, and no line
-may start with `/` (GitLab runs those as quick actions: /merge, /approve).
+read by the forge, not only by people: no HTML, no @-mentions, no links or
+images (a prompt-injected diff could plant a tracking pixel), and no line may
+start with `/` (GitLab runs those as quick actions: /merge, /approve).
 """
 
 import re
@@ -28,6 +29,10 @@ def comment_text(text: str) -> str:
     # One notion of a line: str.splitlines also breaks on \r, \u2028 and others,
     # which ^ in the pattern below would not see
     text = "\n".join(escape_md(text).replace("@", "@\u200b").splitlines())
+    # No links or images under the token owner's name: [..](..) and ![..](..)
+    # lose their brackets, bare URLs their scheme separator
+    text = re.sub(r"([\[\]])", r"\\\1", text)
+    text = re.sub(r"(?i)\b(https?|ftp|www)(:|\.)", "\\1\u200b\\2", text)
     # A backslash keeps the slash visible and the line out of quick actions
     return re.sub(r"(?m)^(\s*)/", r"\1\\/", text)
 

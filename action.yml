@@ -151,10 +151,13 @@ runs:
           const report = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/semantic_diff_analysis.json`, 'utf8'));
 
           // Everything the model wrote may quote the PR author's content: no
-          // HTML, no @-mentions; one-line fields stay on one line, code spans closed
+          // HTML, no @-mentions, no links or images (a prompt-injected diff could
+          // plant a tracking pixel); one-line fields stay on one line, code spans closed
           const esc = (text) => String(text ?? '')
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-            .replace(/@/g, '@\u200b');
+            .replace(/@/g, '@\u200b')
+            .replace(/[\[\]]/g, '\\$&')
+            .replace(/\b(https?|ftp|www)(:|\.)/gi, '$1\u200b$2');
           const line = (text) => esc(text).replace(/\s+/g, ' ').trim();
           // Code spans render no HTML or mentions: only keep them on one line and closed
           const code = (text) => `\`${String(text ?? '').replace(/\s+/g, ' ').trim().replace(/`/g, "'")}\``;

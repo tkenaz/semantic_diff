@@ -78,6 +78,24 @@ class TestModelTextIsInert:
 
         assert not any(line.lstrip().startswith("/") for line in body.splitlines())
 
+    @pytest.mark.parametrize(
+        "planted",
+        [
+            "[docs](https://evil.example/x)",
+            "![pixel](https://t.example/p.gif)",
+            "[ref]: https://evil.example",
+            "www.evil.example/login",
+            "https://evil.example",
+        ],
+    )
+    def test_links_and_images_are_not_rendered(self, planted):
+        finding = _finding(title=f"see {planted}", explanation=planted, **CARD)
+        body = _body(findings=[finding], summary=planted)
+
+        assert "](" not in body.replace("\\](", "")
+        assert "https://" not in body.split("\n---\n")[0]
+        assert "www.evil" not in body
+
     def test_mentions_and_html_are_neutralised(self):
         body = _body(summary="ping @owner <img src=x onerror=alert(1)>")
 
