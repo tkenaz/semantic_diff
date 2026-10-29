@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-29
+
 ### Changed (breaking)
 - `semantic-diff review --json` schema is now `schema_version` 2 (KEN-315):
   findings are split into two channels. `findings` holds only **cited**
@@ -181,7 +183,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Retry logic for API calls
 - Pydantic models for structured analysis
 
-[Unreleased]: https://github.com/tkenaz/semantic_diff/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/tkenaz/semantic_diff/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/tkenaz/semantic_diff/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/tkenaz/semantic_diff/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/tkenaz/semantic_diff/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/tkenaz/semantic_diff/compare/v0.2.0...v0.2.1
