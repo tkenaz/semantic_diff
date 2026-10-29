@@ -15,6 +15,7 @@ from semantic_diff.diff_pack import pack
 from semantic_diff.models import ChangeSet, CommitRef, FileChange, RiskLevel
 from semantic_diff.prompt_parts import number_lines
 from semantic_diff.providers import (
+    ProviderError,
     StopReason,
     ToolCall,
     ToolResult,
@@ -1047,6 +1048,31 @@ class TestTranscript:
             "AssistantMessage",
             "ToolResult",
             "AssistantMessage",
+        ]
+
+    def test_a_review_the_provider_broke_off_is_recorded_too(self, change):
+        recorded = []
+
+        class Failing(ScriptedProvider):
+            def converse(self, *args, **kwargs):
+                if not self.turns:
+                    raise ProviderError("503 after retries")
+                return super().converse(*args, **kwargs)
+
+        agent = ReviewAgent(
+            Failing(uses(call("grep", {"pattern": "get"}))),
+            change["toolbox"],
+            transcript=lambda *args: recorded.append(args),
+        )
+
+        with pytest.raises(ProviderError):
+            agent.review(change["change_set"], change["files"])
+
+        [(_, messages)] = recorded
+        assert [type(m).__name__ for m in messages] == [
+            "UserMessage",
+            "AssistantMessage",
+            "ToolResult",
         ]
 
     def test_an_unsubmitted_review_is_recorded_too(self, change):

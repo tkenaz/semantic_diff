@@ -238,43 +238,47 @@ class ReviewAgent:
         tools = [*self.toolbox.specs, *corpus_specs, SUBMIT_REVIEW]
         wrap_up_turns = 0
 
-        while True:
-            if stats.limit_hit is None:
-                stats.limit_hit = self._limit_reached(stats, last_turn)
-                if stats.limit_hit:
-                    messages[-1] = _with_note(messages[-1], self._wrap_up_note(stats))
-            wrapping_up = stats.limit_hit is not None
+        # Recorded however the review ends - a provider error is when it is needed most
+        try:
+            while True:
+                if stats.limit_hit is None:
+                    stats.limit_hit = self._limit_reached(stats, last_turn)
+                    if stats.limit_hit:
+                        messages[-1] = _with_note(messages[-1], self._wrap_up_note(stats))
+                wrapping_up = stats.limit_hit is not None
 
-            turn = self.provider.converse(
-                system, messages, tools, max_tokens=self.limits.max_output_tokens
-            )
-            _count(stats, turn)
-            last_turn = turn
-            last_text = turn.text or last_text
-            messages.append(turn.as_message())
+                turn = self.provider.converse(
+                    system, messages, tools, max_tokens=self.limits.max_output_tokens
+                )
+                _count(stats, turn)
+                last_turn = turn
+                last_text = turn.text or last_text
+                messages.append(turn.as_message())
 
-            results: List[Message] = []
-            for call in turn.tool_calls:
-                if call.name == SUBMIT_REVIEW.name:
-                    submitted = _parse_submission(call, turn)
-                    if isinstance(submitted, SubmittedReview):
-                        stats.submitted = True
-                        self._record(system, messages)
-                        return self._report(change_set, packed, stats, submitted, last_text, files)
-                    results.append(submitted)
-                elif wrapping_up:
-                    results.append(ToolResult(call.id, REFUSED, is_error=True))
+                results: List[Message] = []
+                for call in turn.tool_calls:
+                    if call.name == SUBMIT_REVIEW.name:
+                        submitted = _parse_submission(call, turn)
+                        if isinstance(submitted, SubmittedReview):
+                            stats.submitted = True
+                            return self._report(
+                                change_set, packed, stats, submitted, last_text, files
+                            )
+                        results.append(submitted)
+                    elif wrapping_up:
+                        results.append(ToolResult(call.id, REFUSED, is_error=True))
+                    else:
+                        results.append(self._run_tool(call, stats))
+
+                if wrapping_up:
+                    wrap_up_turns += 1
+                    if wrap_up_turns >= WRAP_UP_TURNS or stats.turns >= self.limits.max_turns:
+                        return self._report(change_set, packed, stats, None, last_text, files)
+                    messages.extend(results or [UserMessage(self._wrap_up_note(stats))])
                 else:
-                    results.append(self._run_tool(call, stats))
-
-            if wrapping_up:
-                wrap_up_turns += 1
-                if wrap_up_turns >= WRAP_UP_TURNS or stats.turns >= self.limits.max_turns:
-                    self._record(system, messages)
-                    return self._report(change_set, packed, stats, None, last_text, files)
-                messages.extend(results or [UserMessage(self._wrap_up_note(stats))])
-            else:
-                messages.extend(results or [UserMessage(NUDGE)])
+                    messages.extend(results or [UserMessage(NUDGE)])
+        finally:
+            self._record(system, messages)
 
     def _record(self, system: str, messages: List[Message]) -> None:
         if self.transcript:

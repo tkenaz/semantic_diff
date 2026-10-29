@@ -245,7 +245,8 @@ def mr_cmd(
     "--transcript",
     type=click.Path(dir_okay=False, path_type=Path),
     default=None,
-    help="Write the whole review conversation here as JSON lines",
+    help="Write the whole review conversation here as JSON lines "
+    "(it holds the diff and the code the reviewer read: keep it where the code may live)",
 )
 def review_cmd(
     base: Optional[str],
