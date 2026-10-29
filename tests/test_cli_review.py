@@ -51,9 +51,13 @@ class TestReview:
         result = _review(mr_repo, "--json")
 
         report = json.loads(result.stdout)
-        assert report["schema_version"] == 1
+        assert report["schema_version"] == 2
         assert report["verdict"] == "request_changes"
-        assert report["findings"][0]["citation"] == "head"
+        # No corpus: the finding is an uncited observation and nothing gates
+        assert report["findings"] == []
+        assert report["risk_level"] is None
+        assert report["uncited"][0]["citation"] == "head"
+        assert report["uncited"][0]["uncited_reason"] == "no_rule"
         assert report["stats"]["files_read"] == ["api.py"]
 
     def test_save_writes_a_review_report(self, mr_repo, model):
@@ -111,19 +115,65 @@ class TestReview:
         assert model.requests == []
 
     def test_provider_without_tool_calling_is_refused_clearly(self, mr_repo):
-        no_tools = RetryingProvider(AnthropicProvider(client=Mock(), model="m"), max_retries=1)
+        class CompletionOnly:
+            model = "m"
+
+            def complete(self, prompt, *, max_tokens):
+                raise AssertionError("review must not fall back to complete()")
+
+        no_tools = RetryingProvider(CompletionOnly(), max_retries=1)
         with patch("semantic_diff.cli.build_provider", return_value=no_tools):
             result = _review(mr_repo)
 
         assert result.exit_code == 1
         assert "does not support tool calling" in result.stderr
-        assert "SEMANTIC_DIFF_PROVIDER=openai" in result.stderr
+
+    def test_the_anthropic_provider_is_accepted_for_review(self, mr_repo):
+        # KEN-315: the reviewer must run where only ANTHROPIC_API_KEY exists
+        provider = RetryingProvider(AnthropicProvider(client=Mock(), model="m"), max_retries=1)
+        with patch("semantic_diff.cli.build_provider", return_value=provider):
+            result = _review(mr_repo)
+
+        assert "does not support tool calling" not in result.stderr
 
     def test_verbose_reports_progress_on_stderr(self, mr_repo, model):
         result = _review(mr_repo, "--json", "--verbose")
 
         json.loads(result.stdout)
         assert "Reviewing 2 changed files" in result.stderr
+
+    def test_rules_corpus_enables_cited_findings(self, mr_repo, tmp_path):
+        corpus = tmp_path / "corpus"
+        (corpus / "rules").mkdir(parents=True)
+        (corpus / "INDEX.md").write_text("| signal | tags |\n|---|---|\n| api | api |\n")
+        (corpus / "rules" / "api.md").write_text(
+            "### [TEST-1] Return values stay compatible\nsource: Public Standard §1\n"
+        )
+        cited = {
+            "file": "api.py",
+            "line": 2,
+            "severity": "high",
+            "title": "Callers expect 1",
+            "explanation": "util.py compares get() with 1.",
+            "rule_id": "TEST-1",
+            "source": "Public Standard §1",
+            "evidence": "+    return 3",
+        }
+        provider = ScriptedProvider(uses(submit(findings=[cited])))
+        with patch("semantic_diff.cli.build_provider", return_value=provider):
+            result = _review(mr_repo, "--rules", str(corpus), "--json")
+
+        assert result.exit_code == 0, result.output
+        report = json.loads(result.stdout)
+        assert report["findings"][0]["rule_id"] == "TEST-1"
+        assert report["risk_level"] == "high"
+        assert "## Rule corpus" in provider.requests[0].messages[0].text
+
+    def test_rules_must_name_an_existing_directory(self, mr_repo, model):
+        result = _review(mr_repo, "--rules", "/no/such/dir")
+
+        assert result.exit_code == 2
+        assert "does not exist" in result.output
 
 
 class TestReviewLimits:
