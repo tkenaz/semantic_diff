@@ -43,8 +43,13 @@ class Redactor:
         return [self(line) for line in lines]
 
     def keeping_lines(self, text: str) -> str:
-        erased = "\n".join(self.lines(text))
-        return erased + "\n" if text.endswith("\n") else erased
+        """Same, for a diff: diffs are split on \\n alone, and a \\r or \\u2028
+        inside a line must not become a line of its own."""
+        whole, count = self._erase(text)
+        if whole.count("\n") == text.count("\n"):
+            self.erased += count
+            return whole
+        return "\n".join(self(part) for part in text.split("\n"))
 
     def change(
         self, change_set: ChangeSet, files: List[FileChange]

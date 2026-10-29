@@ -31,6 +31,8 @@ def comment_text(text: str) -> str:
     text = "\n".join(escape_md(text).replace("@", "@\u200b").splitlines())
     # No links or images under the token owner's name: [..](..) and ![..](..)
     # lose their brackets, bare URLs their scheme separator
+    # (backslashes first: a model-written one would otherwise unescape a bracket)
+    text = text.replace("\\", "\\\\")
     text = re.sub(r"([\[\]])", r"\\\1", text)
     text = re.sub(r"(?i)\b(https?|ftp|www)(:|\.)", "\\1\u200b\\2", text)
     # A backslash keeps the slash visible and the line out of quick actions

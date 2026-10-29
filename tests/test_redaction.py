@@ -133,6 +133,16 @@ class TestRedactor:
         assert erased.diff_content.count("\n") == diff.count("\n")
         assert redactor.erased == 4
 
+    @pytest.mark.parametrize("separator", ["\r", "\u2028", "\x0c"])
+    def test_a_diff_keeps_its_lines_whatever_else_breaks_a_line(self, separator):
+        diff = f"@@ -1 +1,2 @@\n+a = 1{separator}b\n+SERVICE_TOKEN={IN_DIFF}\n"
+
+        erased = Redactor().keeping_lines(diff)
+
+        assert erased.split("\n")[1] == f"+a = 1{separator}b"
+        assert erased.count("\n") == diff.count("\n")
+        assert IN_DIFF not in erased
+
     def test_empty_text_costs_nothing(self):
         redactor = Redactor()
 

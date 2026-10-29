@@ -82,6 +82,7 @@ class TestModelTextIsInert:
         "planted",
         [
             "[docs](https://evil.example/x)",
+            "\\[docs\\](https://evil.example/x)",
             "![pixel](https://t.example/p.gif)",
             "[ref]: https://evil.example",
             "www.evil.example/login",
