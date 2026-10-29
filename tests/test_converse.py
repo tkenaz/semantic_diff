@@ -73,7 +73,7 @@ def _completion(content=None, tool_calls=None, finish_reason="stop", usage=None)
 
 
 def _usage(prompt=100, completion=20, **extra) -> CompletionUsage:
-    # AIFS reports Anthropic cache counters as extra usage fields
+    # A gateway in front of Anthropic models reports their cache counters as extra usage fields
     return CompletionUsage.model_validate(
         {
             "prompt_tokens": prompt,

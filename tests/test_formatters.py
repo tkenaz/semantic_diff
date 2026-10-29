@@ -202,7 +202,7 @@ class TestMarkdownFormatterMergeRequest:
         assert output.startswith("# Semantic Diff: 0123abcd..abc123de")
         assert "**Merge request:** `0123abcd..abc123de`" in output
         assert "**Authors:** Dev One &lt;d1@x&gt;, Dev Two &lt;d2@x&gt;" in output
-        assert "> AHUB-1 Add JWT authentication" in output
+        assert "> PROJ-1 Add JWT authentication" in output
         assert "**Commit:**" not in output
 
     def test_lists_commits_oldest_first(self, mock_mr_analysis):
@@ -237,7 +237,7 @@ class TestConsoleFormatterMergeRequest:
         ConsoleFormatter().format(mock_mr_analysis)
 
         output = capsys.readouterr().out
-        assert "AHUB-1 Add JWT authentication" in output
+        assert "PROJ-1 Add JWT authentication" in output
         assert "0123abcd..abc123de" in output
         assert "2 commits" in output
 

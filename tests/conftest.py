@@ -319,7 +319,7 @@ def mock_mr_analysis(mock_semantic_analysis):
                 ref="0123abcd..abc123de",
                 head_sha="abc123def456789",
                 base_sha="0123abcd0123abcd",
-                title="AHUB-1 Add JWT authentication",
+                title="PROJ-1 Add JWT authentication",
                 description="Replaces basic auth.",
                 authors=["Dev One <d1@x>", "Dev Two <d2@x>"],
                 commits=[

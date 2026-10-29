@@ -1,6 +1,6 @@
 """
 Adapter: OpenAI Chat Completions protocol, for any compatible gateway
-(e.g. T-Systems AIFS, vLLM, LiteLLM, OpenAI itself).
+(e.g. a corporate LLM gateway, vLLM, LiteLLM, OpenAI itself).
 """
 
 import json
@@ -25,7 +25,8 @@ from semantic_diff.providers.base import (
     parse_retry_after,
 )
 
-# Anthropic-style prompt caching; AIFS passes it through on content blocks
+# Anthropic-style prompt caching; gateways in front of Anthropic models pass it
+# through on content blocks
 CACHE = {"type": "ephemeral"}
 
 STOP_REASONS = {"tool_calls": StopReason.TOOL_USE, "length": StopReason.MAX_TOKENS}

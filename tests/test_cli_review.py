@@ -98,10 +98,10 @@ class TestReview:
         description = tmp_path / "mr.md"
         description.write_text("Because the spec says so.")
 
-        _review(mr_repo, "--title", "fix: AHUB-7 return 3", "--description-file", str(description))
+        _review(mr_repo, "--title", "fix: PROJ-7 return 3", "--description-file", str(description))
 
         first = model.requests[0].messages[0].text
-        assert "- **Title:** fix: AHUB-7 return 3" in first
+        assert "- **Title:** fix: PROJ-7 return 3" in first
         assert "Because the spec says so." in first
 
     def test_without_a_description_none_is_sent(self, mr_repo, model):
@@ -117,7 +117,7 @@ class TestReview:
         )
 
         assert result.exit_code == 0, result.output
-        assert json.loads(result.stdout)["change_set"]["title"] == "fix(platform): AHUB-7 return 3"
+        assert json.loads(result.stdout)["change_set"]["title"] == "fix(platform): PROJ-7 return 3"
 
     def test_gitlab_comment_posts_the_review_after_printing_it(self, mr_repo, model):
         with patch("semantic_diff.cli.MergeRequestNote") as note:

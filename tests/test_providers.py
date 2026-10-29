@@ -534,7 +534,7 @@ class TestBuildProvider:
     def test_openai_compat_uses_base_url_key_and_model(self):
         env = {
             "SEMANTIC_DIFF_PROVIDER": "openai",
-            "SEMANTIC_DIFF_API_KEY": "aifs-key",
+            "SEMANTIC_DIFF_API_KEY": "gateway-key",
             "SEMANTIC_DIFF_BASE_URL": "https://llm.example/v2",
             "SEMANTIC_DIFF_MODEL": "claude-sonnet-4.6",
         }
@@ -544,7 +544,7 @@ class TestBuildProvider:
         inner = provider.inner
         assert isinstance(inner, OpenAICompatProvider)
         assert str(inner.client.base_url).rstrip("/") == "https://llm.example/v2"
-        assert inner.client.api_key == "aifs-key"
+        assert inner.client.api_key == "gateway-key"
         assert inner.client.max_retries == 0
         assert provider.model == "claude-sonnet-4.6"
 
