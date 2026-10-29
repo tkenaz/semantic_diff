@@ -11,6 +11,7 @@ from semantic_diff.providers.base import (
     AssistantMessage,
     Completion,
     Message,
+    ModelUnavailableError,
     ProviderError,
     RateLimitError,
     StopReason,
@@ -102,6 +103,8 @@ class AnthropicProvider:
             ) from e
         except (anthropic.APITimeoutError, anthropic.APIConnectionError) as e:
             raise TransientError(str(e)) from e
+        except anthropic.NotFoundError as e:
+            raise ModelUnavailableError(self.model, str(e)) from e
         except anthropic.APIStatusError as e:
             if e.status_code >= 500:
                 raise TransientError(f"{e.status_code}: {e}") from e

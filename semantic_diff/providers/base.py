@@ -23,6 +23,21 @@ class ProviderError(Exception):
     """A provider call failed and retrying will not help."""
 
 
+class ModelUnavailableError(ProviderError):
+    """404: the endpoint does not serve this model - retired, not enabled for the key, or a
+    wrong base URL. Never retried and never swapped for another model: a different model
+    gives different results, so the choice stays with the user."""
+
+    def __init__(self, model: str, detail: str):
+        super().__init__(
+            f"model {model} is not available at this endpoint (retired, not enabled for your "
+            "key, or a wrong base URL). Set SEMANTIC_DIFF_MODEL or --model to one that is; "
+            "reports from another model are not comparable with earlier ones. "
+            f"The endpoint said: {detail}"
+        )
+        self.model = model
+
+
 class TransientError(ProviderError):
     """Timeout, connection drop or 5xx - worth retrying."""
 

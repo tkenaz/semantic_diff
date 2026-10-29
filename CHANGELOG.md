@@ -47,6 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one line).
 
 ### Fixed
+- A model the endpoint does not serve (404: retired, not enabled for the key,
+  or a wrong base URL) raises `ModelUnavailableError`, which names the model,
+  says how to pick another and keeps the endpoint's own message. Never retried,
+  never swapped for another model.
 - `.env` is now found in the current directory (the analyzed repository), not
   searched upward from the installed package, so it works for `pip install`
   users and not only for editable checkouts; it is also loaded before options
