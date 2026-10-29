@@ -12,10 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   findings are split into two channels. `findings` holds only **cited**
   findings — backed by a rule card from a configured corpus (`rule_id`
   verified in code against the corpus, brackets and stray spaces ignored;
-  `source` is printed from the card itself, not from the model) and by
-  evidence that checked out (the cited line exists, the file was seen, the
-  quoted `evidence` is in the diff, with or without the line-number prefix
-  the model was shown). Everything else lands in `uncited` with
+  `source` is printed from the card itself, not from the model; a card
+  without a `source:` line gives none, so it never gates) and by evidence
+  that checked out (the cited line exists, the file was seen, the quoted
+  `evidence` is in the diff within a few lines of the cited line, with or
+  without the line-number prefix the model was shown, and holds at least six
+  letters or digits — `}` proves nothing). Everything else lands in `uncited` with
   honest severity: observations without a card, invented rule ids, findings
   whose evidence failed a check. New top-level `risk_level` carries the worst
   severity among cited findings (null without any) — the only value a CI gate

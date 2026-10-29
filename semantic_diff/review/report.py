@@ -7,7 +7,7 @@ Findings come in two channels (schema_version 2):
 - `findings` — cited: backed by a rule card from the configured corpus
   (`rule_id` + `source` copied verbatim) AND by evidence that holds up
   (the cited line exists, the file was seen, the quoted evidence is in the
-  diff). Gating consumers (CI `fail_on_risk`) read ONLY this channel,
+  diff next to the cited line and says more than a brace). Gating consumers (CI `fail_on_risk`) read ONLY this channel,
   through `risk_level`.
 - `uncited` — everything else: observations without a card, citations of
   cards that do not exist, findings whose evidence did not check out.

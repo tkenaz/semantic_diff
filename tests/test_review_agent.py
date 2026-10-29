@@ -737,6 +737,19 @@ class TestChannels:
         [finding] = report.findings
         assert finding.source == CARD_SOURCE
 
+    def test_a_card_without_a_source_line_lends_none_to_the_model(self, change, tmp_path):
+        root = tmp_path / "bare"
+        (root / "rules").mkdir(parents=True)
+        (root / "INDEX.md").write_text("x")
+        (root / "rules" / "api.md").write_text("### [TEST-1] No source line\nseverity: high\n")
+        provider = ScriptedProvider(uses(submit(findings=[{**CITED, "source": "OWASP §8"}])))
+
+        report = _review(change, provider, corpus=RulesCorpus(root))
+
+        assert report.findings == []
+        [finding] = report.uncited
+        assert (finding.source, finding.uncited_reason) == (None, "no_rule")
+
     def test_evidence_quoted_as_shown_with_its_line_number_holds(self, change, corpus):
         # The diff reaches the model numbered; a quote copied as displayed is verbatim
         quoted = {**CITED, "evidence": "    3|+    return 3"}
@@ -867,18 +880,38 @@ class TestEvidenceInDiff:
         ],
     )
     def test_quoted_lines_must_be_diff_lines(self, evidence, held):
-        assert _evidence_in_diff(evidence, self.DIFF) is held
+        assert _evidence_in_diff(evidence, self.DIFF, 2) is held
 
     def test_every_line_of_the_numbered_rendering_holds(self):
         numbered = number_lines(self.DIFF).splitlines()[1:]  # skip the hunk header
 
-        assert numbered and all(_evidence_in_diff(line, self.DIFF) for line in numbered)
+        assert numbered and all(_evidence_in_diff(line, self.DIFF, 2) for line in numbered)
 
     def test_a_real_line_that_looks_numbered_still_matches_as_quoted(self):
-        assert _evidence_in_diff("+12|x", "@@ -0,0 +1 @@\n+12|x") is True
+        assert _evidence_in_diff("+12|value()", "@@ -0,0 +1 @@\n+12|value()", 1) is True
 
     def test_no_diff_for_the_file_means_no_evidence(self):
-        assert _evidence_in_diff("+    return 3", None) is False
+        assert _evidence_in_diff("+    return 3", None, 2) is False
+
+    FAR = "@@ -1,30 +1,30 @@\n" + "\n".join(f" line_{n:02} = {n}" for n in range(1, 31))
+
+    @pytest.mark.parametrize(
+        "line, held", [(10, True), (16, True), (17, False), (4, True), (3, False)]
+    )
+    def test_the_quote_sits_next_to_the_cited_line(self, line, held):
+        # line_10 is at line 10; a quote of one line may sit EVIDENCE_WINDOW + 1 away
+        assert _evidence_in_diff("line_10 = 10", self.FAR, line) is held
+
+    def test_a_longer_quote_may_run_on_past_the_window(self):
+        quote = "\n".join(f"line_{n:02} = {n}" for n in range(10, 20))
+
+        assert _evidence_in_diff(quote, self.FAR, 10) is True
+
+    @pytest.mark.parametrize("evidence", ["}", "else:", "  pass", "42|+)"])
+    def test_a_quote_that_says_nothing_proves_nothing(self, evidence):
+        diff = "@@ -1,3 +1,4 @@\n if x:\n     pass\n else:\n+)\n }"
+
+        assert _evidence_in_diff(evidence, diff, 2) is False
 
 
 class TestCitationFor:
