@@ -6,7 +6,7 @@ wrote can mention people, inject HTML or run a quick action.
 
 import pytest
 
-from semantic_diff.review.mr_comment import MARKER, comment_body
+from semantic_diff.review.mr_comment import MARKER, comment_body, why_uncited
 from semantic_diff.review.report import ReviewStats
 from tests.test_review_markdown import _finding, _report
 
@@ -35,13 +35,27 @@ class TestLayout:
         assert "  util.py compares get() with 1." in body
         assert "  **Suggestion:** Return 1 again." in body
 
-    def test_uncited_findings_are_folded_as_unverified(self):
+    def test_uncited_high_findings_stay_in_the_open_with_a_warning(self):
         body = _body(findings=[], uncited=[_finding(uncited_reason="no_rule")])
+
+        assert "> ⚠ 1 high-severity finding(s) below are uncited" in body
+        assert "### Uncited high-severity findings (1, never gate)" in body
+        assert "<details>" not in body
+        assert "Callers expect 1" in body
+
+    def test_lower_uncited_findings_are_folded(self):
+        body = _body(findings=[], uncited=[_finding(severity="medium", uncited_reason="no_rule")])
 
         before, folded = body.split("<details>", 1)
         assert "Callers expect 1" not in before
-        assert "Unverified observations (1)" in folded
-        assert "Callers expect 1" in folded.split("</details>")[0]
+        assert "Other uncited observations (1, never gate)" in folded
+        assert "high-severity" not in body
+
+    def test_the_footer_has_no_link(self):
+        footer = _body().splitlines()[-1]
+
+        assert footer == "*Reviewed by semantic-diff (claude-opus-4.6) at `def56780`*"
+        assert "http" not in footer
 
     def test_an_unsubmitted_review_says_so(self):
         body = _body(verdict=None, findings=[], stats=ReviewStats(submitted=False))
@@ -77,3 +91,34 @@ class TestModelTextIsInert:
         assert "  # heading" in body
         assert "\n# heading" not in body
         assert "  \\/close" in body
+
+
+class TestWhyUncited:
+    def _why(self, **override):
+        return why_uncited(_finding(**override))
+
+    def test_no_rule_says_so_and_what_did_check_out(self):
+        why = self._why(uncited_reason="no_rule")
+
+        assert "no rule card backs it (or no rule corpus is configured)" in why
+        assert "The cited line exists and the reviewer read the file" in why
+
+    def test_unknown_rule_names_it(self):
+        assert "not in the corpus (made-up)" in self._why(
+            uncited_reason="unknown_rule_id", rule_id="made-up"
+        )
+
+    def test_failed_evidence_is_told_apart_from_a_missing_card(self):
+        why = self._why(uncited_reason="no_evidence", **CARD)
+
+        assert "quoted evidence was not found in the diff" in why
+        assert "no rule card" not in why
+
+    def test_a_missing_line_or_an_unread_file_comes_first(self):
+        assert "line does not exist" in self._why(uncited_reason="no_rule", citation="no_such_line")
+        assert "never opened this file" in self._why(uncited_reason="no_rule", seen=False)
+
+    def test_the_reason_is_printed_under_the_finding(self):
+        body = _body(findings=[], uncited=[_finding(uncited_reason="no_rule")])
+
+        assert "  *Uncited: no rule card backs it" in body

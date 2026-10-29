@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-29
+
+### Changed
+- MR comment (`--gitlab-comment`): uncited high and critical findings are no
+  longer folded away; they stay in the open under a warning that they do not
+  gate. Every uncited finding says why it is uncited (no rule card, unknown
+  rule, evidence not found, missing line, unread file) and which checks it
+  passed: one fold label for all reasons read as "the evidence was wrong".
+- The comment footer no longer links to the project.
+
 ## [0.5.0] - 2026-10-29
 
 ### Added
@@ -195,7 +205,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Retry logic for API calls
 - Pydantic models for structured analysis
 
-[Unreleased]: https://github.com/tkenaz/semantic_diff/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/tkenaz/semantic_diff/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/tkenaz/semantic_diff/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/tkenaz/semantic_diff/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/tkenaz/semantic_diff/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/tkenaz/semantic_diff/compare/v0.2.2...v0.3.0

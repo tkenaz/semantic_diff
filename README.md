@@ -132,7 +132,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: tkenaz/semantic_diff@v0.5.0
+      - uses: tkenaz/semantic_diff@v0.5.1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           comment_on_pr: true
@@ -278,8 +278,9 @@ semantic-diff review --gitlab-env --json   # inside a GitLab MR pipeline
   notes by the token's own user are matched). The token comes from
   `SEMANTIC_DIFF_GITLAB_TOKEN` (`CI_JOB_TOKEN` cannot write notes): a project
   access token with the `api` scope and the Reporter role is enough. The note
-  shows the verdict and the cited findings; uncited ones are folded away as
-  unverified. Posting is advisory: if it fails, the job warns and goes on.
+  shows the verdict and the cited findings; uncited high-severity findings stay
+  in the open, each with the reason it is uncited (without `--rules` that is
+  every finding), and the rest are folded away. Posting is advisory: if it fails, the job warns and goes on.
 
 #### Cited findings and the rule corpus
 
