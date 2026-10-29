@@ -21,7 +21,9 @@ ICONS = {"low": "✅", "medium": "⚠️", "high": "🔶", "critical": "🔴"}
 
 
 def comment_text(text: str) -> str:
-    text = escape_md(text).replace("@", "@​")
+    # One notion of a line: str.splitlines also breaks on \r, \u2028 and others,
+    # which ^ in the pattern below would not see
+    text = "\n".join(escape_md(text).replace("@", "@\u200b").splitlines())
     # A backslash keeps the slash visible and the line out of quick actions
     return re.sub(r"(?m)^(\s*)/", r"\1\\/", text)
 

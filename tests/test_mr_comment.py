@@ -4,6 +4,8 @@ findings in full, uncited ones folded as unverified, and nothing the model
 wrote can mention people, inject HTML or run a quick action.
 """
 
+import pytest
+
 from semantic_diff.review.mr_comment import MARKER, comment_body
 from semantic_diff.review.report import ReviewStats
 from tests.test_review_markdown import _finding, _report
@@ -54,6 +56,13 @@ class TestModelTextIsInert:
 
         assert not any(line.lstrip().startswith("/") for line in body.splitlines())
         assert "\\/merge" in body
+
+    @pytest.mark.parametrize("separator", ["\r", "\u2028", "\x0b", "\x1c"])
+    def test_other_line_separators_cannot_start_a_quick_action(self, separator):
+        finding = _finding(explanation=f"ok{separator}/merge", suggestion=f"x{separator}/approve")
+        body = _body(findings=[finding], summary=f"fine{separator}/close")
+
+        assert not any(line.lstrip().startswith("/") for line in body.splitlines())
 
     def test_mentions_and_html_are_neutralised(self):
         body = _body(summary="ping @owner <img src=x onerror=alert(1)>")

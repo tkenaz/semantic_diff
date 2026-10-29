@@ -5,9 +5,13 @@ NoteError that names the request but never the token.
 """
 
 import json
+import threading
+import urllib.error
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
+from semantic_diff import gitlab_note
 from semantic_diff.gitlab_note import (
     TOKEN_VARIABLE,
     MergeRequestNote,
@@ -127,13 +131,55 @@ class TestFailures:
             MergeRequestTarget.from_env(env)
 
     def test_an_unreachable_host_is_a_note_error(self, monkeypatch):
-        import urllib.error
+        class Refusing:
+            def open(self, *args, **kwargs):
+                raise urllib.error.URLError("connection refused")
 
-        from semantic_diff import gitlab_note
-
-        def refuse(*args, **kwargs):
-            raise urllib.error.URLError("connection refused")
-
-        monkeypatch.setattr(gitlab_note.urllib.request, "urlopen", refuse)
+        monkeypatch.setattr(gitlab_note, "_opener", Refusing())
         with pytest.raises(NoteError, match="/api/v4/user: connection refused"):
             _upsert(gitlab_note.urllib_transport)
+
+    def test_a_redirect_is_refused_and_the_token_goes_nowhere_else(self, redirecting_server):
+        api, elsewhere = redirecting_server
+        env = {**ENV, "CI_API_V4_URL": api}
+
+        with pytest.raises(NoteError, match="HTTP 302"):
+            _upsert(gitlab_note.urllib_transport, env)
+
+        assert elsewhere == []
+
+
+@pytest.fixture
+def redirecting_server():
+    """A local API that answers every request with a redirect to a second
+    local server; the second one records who reached it"""
+    reached = []
+
+    class Elsewhere(BaseHTTPRequestHandler):
+        def do_GET(self):
+            reached.append(self.headers.get("PRIVATE-TOKEN"))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"id": 1}')
+
+        def log_message(self, *args):
+            pass
+
+    target = HTTPServer(("127.0.0.1", 0), Elsewhere)
+
+    class Redirect(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{target.server_port}{self.path}")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    api = HTTPServer(("127.0.0.1", 0), Redirect)
+    for server in (target, api):
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{api.server_port}/api/v4", reached
+    for server in (target, api):
+        server.shutdown()
+        server.server_close()

@@ -48,10 +48,21 @@ class MergeRequestTarget:
 Transport = Callable[[str, str, Mapping[str, str], Optional[bytes]], tuple]
 
 
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    """urllib would resend PRIVATE-TOKEN to wherever a redirect points, and turn
+    a POST into a GET: a redirect is an error here, not a detour."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_opener = urllib.request.build_opener(_NoRedirects)
+
+
 def urllib_transport(method, url, headers, body):
     request = urllib.request.Request(url, data=body, headers=dict(headers), method=method)
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+        with _opener.open(request, timeout=TIMEOUT_SECONDS) as response:
             return response.status, dict(response.headers), response.read()
     except urllib.error.HTTPError as e:
         return e.code, dict(e.headers or {}), e.read()
