@@ -4,6 +4,7 @@ among the token user's own notes and edited in place; every failure is a
 NoteError that names the request but never the token.
 """
 
+import http.client
 import json
 import threading
 import urllib.error
@@ -137,6 +138,15 @@ class TestFailures:
 
         monkeypatch.setattr(gitlab_note, "_opener", Refusing())
         with pytest.raises(NoteError, match="/api/v4/user: connection refused"):
+            _upsert(gitlab_note.urllib_transport)
+
+    def test_a_cut_off_response_is_a_note_error(self, monkeypatch):
+        class CutOff:
+            def open(self, *args, **kwargs):
+                raise http.client.IncompleteRead(b"{")
+
+        monkeypatch.setattr(gitlab_note, "_opener", CutOff())
+        with pytest.raises(NoteError, match="/api/v4/user"):
             _upsert(gitlab_note.urllib_transport)
 
     def test_a_redirect_is_refused_and_the_token_goes_nowhere_else(self, redirecting_server):

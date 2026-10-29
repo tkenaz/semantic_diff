@@ -7,6 +7,7 @@ marker into a comment; editing theirs would fail, or worse, hijack it.
 Posting is advisory: a failure is a warning, never a failed job.
 """
 
+import http.client
 import json
 import urllib.error
 import urllib.parse
@@ -66,7 +67,7 @@ def urllib_transport(method, url, headers, body):
             return response.status, dict(response.headers), response.read()
     except urllib.error.HTTPError as e:
         return e.code, dict(e.headers or {}), e.read()
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
+    except (urllib.error.URLError, http.client.HTTPException, OSError) as e:
         reason = getattr(e, "reason", e)
         raise NoteError(f"{method} {_path_only(url)}: {reason}") from None
 
