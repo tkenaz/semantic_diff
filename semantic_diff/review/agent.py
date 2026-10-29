@@ -16,7 +16,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from pydantic import ValidationError
 
 from semantic_diff.diff_pack import DiffPack, pack
-from semantic_diff.models import ChangeSet, FileChange
+from semantic_diff.models import ChangeSet, FileChange, RiskLevel
 from semantic_diff.prompt_parts import (
     diff_lines,
     format_change_set,
@@ -43,9 +43,11 @@ from semantic_diff.review.report import (
     SubmittedFinding,
     SubmittedReview,
     UncitedReason,
+    Verdict,
     worst_severity,
 )
 from semantic_diff.review.tools import Toolbox
+from semantic_diff.review.transcript import TranscriptSink
 
 SEVERITIES = ["low", "medium", "high", "critical"]
 
@@ -106,22 +108,32 @@ SUBMIT_REVIEW = ToolSpec(
     },
 )
 
+# Bump when the review method changes, so evaluations compare like with like
+PROMPT_VERSION = 2
+
 SYSTEM_PROMPT = """You are a senior engineer reviewing a merge request. You have read-only tools: read_file, grep, list_dir and git_log see the repository at the merge request head; read_base sees a file as it was before the change.
 
+Your job is to find what is wrong or missing, not to confirm the author. The title and description are the author's claims, not the specification: treat each claim as a hypothesis to test. When the description lists what the change covers (keys, fields, routes, callers, cases), that list is where to look for what it does not cover.
+
 How to review:
-1. Understand the intent from the title and description. Check that the change does what it claims - and only that.
-2. Look at the list of changed files: where the weight is, what is risky (migrations, authentication and access checks, tenant or data scoping, CI and deployment config, concurrency, error handling), what is noise.
+1. Understand the intent and the claims. Check that the change does what it claims - and that what it claims is enough.
+2. Look at the list of changed files: where the weight is, what is risky (migrations, authentication and access checks, tenant or data scoping, secrets and personal data, CI and deployment config, concurrency, error handling), what is noise.
 3. Read the risky parts of the diff first, not the biggest.
-4. Go beyond the diff: read whole changed functions, find callers and other usages with grep, compare with read_base, check schemas, config and wiring. Most real defects are found here.
-5. Check tests against claims: does each test exercise what it says? Is the new behaviour tested? Will CI actually run these tests?
+4. Find the siblings. When the change protects, filters, validates, strips, encrypts or cleans up one thing, the defect is usually in another thing of the same kind that it left alone. Search by the kind, not by the name in the diff: other writers to the same store, other fields of the same object, other routes with the same exposure, other callers of the same function, other copies of the same logic. Check each one.
+5. Enumerate what a rule lets through. When the change decides by a rule which things are in or out (a filter, an allow-list, a posture or role check, a pattern), list what actually passes the rule and look for members that should not.
+6. Check invariants across calls, not only one call: does page 2 continue page 1 without duplicates or gaps, does a cached value match a fresh one, is a retry safe to repeat, does the order hold under concurrency.
+7. Go beyond the diff: read whole changed functions, find callers with grep, compare with read_base, check schemas, config and wiring. Most real defects are found here.
+8. Check tests against claims: does each test exercise what it says - the code that is actually served or run, not a helper next to it? Is the new behaviour tested? Will CI actually run these tests?
 
 Diff lines are prefixed with their line number after the change; removed lines with b<N>, their line number before the change. Cite these numbers directly - there is no need to read a file again just to find a line.
 
 Findings:
-- Report only a defect you can point to: a file and line at head (at base for removed code) that you have read with a tool or seen in the diff.
+- Report a defect you can point to: a file and line at head (at base for removed code) that you have read with a tool or seen in the diff. Something missing is a defect too: cite the place that is left uncovered - the writer, field, route or caller the change should have handled.
 - Explain the concrete failure: which input or state leads to which wrong outcome.
-- No style nits, no praise, no generic advice. A few real findings beat many speculative ones. If you are unsure, say so and lower the severity.
-- Files you did not see may hide problems: say so in the summary rather than guessing.
+- Severity is the impact if the finding is real. If you are not sure it is real, keep the severity and say in the explanation what you could not confirm.
+- No style nits, no praise, no generic advice.
+
+Verdict: approve only when you checked the risky parts, the siblings and the claims, and found nothing of high severity. If something that matters stayed unchecked, use comment and name it in the summary.
 
 Findings come in two channels:
 {channels}
@@ -190,9 +202,11 @@ class ReviewAgent:
         toolbox: Toolbox,
         limits: ReviewLimits = ReviewLimits(),
         now: Callable[[], datetime] = datetime.now,
+        transcript: Optional[TranscriptSink] = None,
         corpus: Optional[RulesCorpus] = None,
     ):
         self.provider = provider
+        self.transcript = transcript
         self.toolbox = toolbox
         self.limits = limits
         self._now = now
@@ -224,41 +238,51 @@ class ReviewAgent:
         tools = [*self.toolbox.specs, *corpus_specs, SUBMIT_REVIEW]
         wrap_up_turns = 0
 
-        while True:
-            if stats.limit_hit is None:
-                stats.limit_hit = self._limit_reached(stats, last_turn)
-                if stats.limit_hit:
-                    messages[-1] = _with_note(messages[-1], self._wrap_up_note(stats))
-            wrapping_up = stats.limit_hit is not None
+        # Recorded however the review ends - a provider error is when it is needed most
+        try:
+            while True:
+                if stats.limit_hit is None:
+                    stats.limit_hit = self._limit_reached(stats, last_turn)
+                    if stats.limit_hit:
+                        messages[-1] = _with_note(messages[-1], self._wrap_up_note(stats))
+                wrapping_up = stats.limit_hit is not None
 
-            turn = self.provider.converse(
-                system, messages, tools, max_tokens=self.limits.max_output_tokens
-            )
-            _count(stats, turn)
-            last_turn = turn
-            last_text = turn.text or last_text
-            messages.append(turn.as_message())
+                turn = self.provider.converse(
+                    system, messages, tools, max_tokens=self.limits.max_output_tokens
+                )
+                _count(stats, turn)
+                last_turn = turn
+                last_text = turn.text or last_text
+                messages.append(turn.as_message())
 
-            results: List[Message] = []
-            for call in turn.tool_calls:
-                if call.name == SUBMIT_REVIEW.name:
-                    submitted = _parse_submission(call, turn)
-                    if isinstance(submitted, SubmittedReview):
-                        stats.submitted = True
-                        return self._report(change_set, packed, stats, submitted, last_text, files)
-                    results.append(submitted)
-                elif wrapping_up:
-                    results.append(ToolResult(call.id, REFUSED, is_error=True))
+                results: List[Message] = []
+                for call in turn.tool_calls:
+                    if call.name == SUBMIT_REVIEW.name:
+                        submitted = _parse_submission(call, turn)
+                        if isinstance(submitted, SubmittedReview):
+                            stats.submitted = True
+                            return self._report(
+                                change_set, packed, stats, submitted, last_text, files
+                            )
+                        results.append(submitted)
+                    elif wrapping_up:
+                        results.append(ToolResult(call.id, REFUSED, is_error=True))
+                    else:
+                        results.append(self._run_tool(call, stats))
+
+                if wrapping_up:
+                    wrap_up_turns += 1
+                    if wrap_up_turns >= WRAP_UP_TURNS or stats.turns >= self.limits.max_turns:
+                        return self._report(change_set, packed, stats, None, last_text, files)
+                    messages.extend(results or [UserMessage(self._wrap_up_note(stats))])
                 else:
-                    results.append(self._run_tool(call, stats))
+                    messages.extend(results or [UserMessage(NUDGE)])
+        finally:
+            self._record(system, messages)
 
-            if wrapping_up:
-                wrap_up_turns += 1
-                if wrap_up_turns >= WRAP_UP_TURNS or stats.turns >= self.limits.max_turns:
-                    return self._report(change_set, packed, stats, None, last_text, files)
-                messages.extend(results or [UserMessage(self._wrap_up_note(stats))])
-            else:
-                messages.extend(results or [UserMessage(NUDGE)])
+    def _record(self, system: str, messages: List[Message]) -> None:
+        if self.transcript:
+            self.transcript(system, messages)
 
     @staticmethod
     def _wrap_up_note(stats: ReviewStats) -> str:
@@ -295,9 +319,14 @@ class ReviewAgent:
         files: List[FileChange],
     ) -> ReviewReport:
         findings, uncited = self._checked(submitted, packed, stats, files)
+        verdict, note = (None, None)
+        if submitted:
+            verdict, note = settle_verdict(submitted.verdict, findings, uncited, stats.limit_hit)
         return ReviewReport(
             change_set=change_set,
-            verdict=submitted.verdict if submitted else None,
+            verdict=verdict,
+            submitted_verdict=submitted.verdict if submitted else None,
+            verdict_note=note,
             summary=submitted.summary if submitted else (last_text or NOT_SUBMITTED),
             findings=findings,
             uncited=uncited,
@@ -305,6 +334,7 @@ class ReviewAgent:
             stats=stats,
             diff_coverage=packed.coverage,
             review_model=self.provider.model,
+            prompt_version=PROMPT_VERSION,
             review_timestamp=self._now().isoformat(),
         )
 
@@ -369,6 +399,37 @@ class ReviewAgent:
         if not _evidence_in_diff(finding.evidence, diffs.get(path), finding.line):
             return "no_evidence"
         return None
+
+
+BLOCKING = (RiskLevel.CRITICAL, RiskLevel.HIGH)
+
+
+def settle_verdict(
+    proposed: Verdict,
+    cited: List[Finding],
+    uncited: List[Finding],
+    limit_hit: Optional[Limit],
+) -> Tuple[Verdict, Optional[str]]:
+    """
+    The verdict the report gives, and why it differs from the model's proposal.
+    The model may ask for more caution than the evidence demands, never less:
+    a cited high finding requests changes, and nothing unfinished or with an
+    uncited high finding is approved. An uncited finding never requests
+    changes by itself - it holds back approval, as it never flips the gate.
+    """
+    if proposed == "request_changes":
+        return proposed, None
+    blocking = [f for f in cited if f.severity in BLOCKING]
+    if blocking:
+        worst = min(blocking, key=lambda f: BLOCKING.index(f.severity)).severity.value
+        return "request_changes", f"a cited {worst} finding holds up against the code"
+    if proposed != "approve":
+        return proposed, None
+    if any(f.severity in BLOCKING for f in uncited):
+        return "comment", "a high finding is not backed by a rule card and checked evidence"
+    if limit_hit:
+        return "comment", f"the review stopped at its {limit_hit} limit before checking everything"
+    return proposed, None
 
 
 def citation_for(line: int, head_lines: Optional[int], base_lines: Optional[int]) -> Citation:

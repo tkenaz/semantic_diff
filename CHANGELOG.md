@@ -27,6 +27,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   quoted evidence on cited findings, and an `Uncited observations` section.
 
 ### Added
+- The review verdict is settled in code, not taken from the model: a cited
+  high or critical finding requests changes; an uncited high finding or a
+  review cut short by a limit is never approved (it becomes `comment`); the
+  model may always ask for more caution. The report keeps the model's
+  proposal (`submitted_verdict`) and says why it was overruled
+  (`verdict_note`).
+- Review prompt v2 (recorded in the report): the description is treated as
+  claims to test, not to confirm; the reviewer looks at siblings the change
+  left alone (other writers, fields, routes, callers) and cross-call
+  invariants, counts something missing as a defect, and keeps severity for
+  impact rather than confidence.
+- `semantic-diff review --transcript FILE`: the whole review conversation
+  (system prompt, every tool call and result) as JSON lines, for diagnosing
+  a missed defect. It holds the diff and the code the reviewer read.
 - Tool calling (`converse`) on the Anthropic adapter, with prompt caching and
   merged tool results — `semantic-diff review` now runs against the default
   Anthropic provider (`ANTHROPIC_API_KEY`), not only OpenAI-compatible

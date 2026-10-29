@@ -27,6 +27,7 @@ from semantic_diff.review.agent import ReviewAgent, ReviewLimits
 from semantic_diff.review.corpus import RulesCorpus
 from semantic_diff.review.markdown import ReviewMarkdownFormatter
 from semantic_diff.review.tools import Toolbox
+from semantic_diff.review.transcript import file_sink
 from semantic_diff.user_env import load_user_env
 
 REPORTS_DIR_NAME = "semantic_diff_reports"
@@ -240,6 +241,13 @@ def mr_cmd(
     envvar="SEMANTIC_DIFF_RULES",
     help="Rule corpus directory (INDEX.md + rules/*.md); enables cited findings",
 )
+@click.option(
+    "--transcript",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Write the whole review conversation here as JSON lines "
+    "(it holds the diff and the code the reviewer read: keep it where the code may live)",
+)
 def review_cmd(
     base: Optional[str],
     head: Optional[str],
@@ -255,6 +263,7 @@ def review_cmd(
     max_input_tokens: int,
     max_diff_tokens: int,
     rules: Optional[Path],
+    transcript: Optional[Path],
 ):
     """Review a merge request: an agent reads around the change and reports findings."""
     with _reported_errors(verbose):
@@ -286,7 +295,10 @@ def review_cmd(
             diff_budget_tokens=max_diff_tokens,
         )
         toolbox = Toolbox(parser.repo, head=change_set.head_sha, base=change_set.base_sha)
-        report = ReviewAgent(provider, toolbox, limits, corpus=corpus).review(change_set, files)
+        sink = file_sink(transcript) if transcript else None
+        report = ReviewAgent(provider, toolbox, limits, corpus=corpus, transcript=sink).review(
+            change_set, files
+        )
 
         formatter = ReviewMarkdownFormatter()
         if output_json:

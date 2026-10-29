@@ -38,6 +38,7 @@ class ReviewMarkdownFormatter:
             f"**Gate risk:** {risk} — from cited findings only; uncited observations never gate.",
             "",
         ]
+        lines += _overruled(report)
         lines += _warning(report)
         lines += ["## Summary", "", escape_md(report.summary), ""]
         lines += [f"## Findings ({len(report.findings)})", ""]
@@ -65,6 +66,18 @@ class ReviewMarkdownFormatter:
         path = output_dir / f"review_{report.change_set.head_sha[:8]}_{timestamp}.md"
         path.write_text(self.format(report), encoding="utf-8")
         return path
+
+
+def _overruled(report: ReviewReport) -> List[str]:
+    if not report.verdict_note:
+        return []
+    proposed = (report.submitted_verdict or "none").replace("_", " ")
+    verdict = (report.verdict or "none").replace("_", " ")
+    return [
+        f"> The reviewer proposed **{proposed}**; the verdict is **{verdict}**: "
+        f"{report.verdict_note}.",
+        "",
+    ]
 
 
 def _warning(report: ReviewReport) -> List[str]:

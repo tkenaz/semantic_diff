@@ -68,6 +68,22 @@ class TestHeader:
         assert "**fix: return 3**" in lines
         assert "**Verdict:** request changes · claude-opus-4.6 · 2026-10-14T12:00:00" in lines
 
+    def test_an_overruled_verdict_says_what_the_model_proposed_and_why(self):
+        md = _md(
+            verdict="comment",
+            submitted_verdict="approve",
+            verdict_note="the review stopped at its turns limit before checking everything",
+            findings=[],
+        )
+
+        assert (
+            "> The reviewer proposed **approve**; the verdict is **comment**: the review "
+            "stopped at its turns limit before checking everything." in md.splitlines()
+        )
+
+    def test_a_kept_verdict_has_no_note(self):
+        assert "The reviewer proposed" not in _md(submitted_verdict="request_changes")
+
     def test_title_is_escaped(self):
         cs = _report().change_set.model_copy(update={"title": "<img src=x>"})
 

@@ -4,6 +4,7 @@ tools until it submits a review, within hard limits on turns and tokens.
 The provider is scripted; the toolbox is real, over a real git repository.
 """
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from semantic_diff.diff_pack import pack
 from semantic_diff.models import ChangeSet, CommitRef, FileChange, RiskLevel
 from semantic_diff.prompt_parts import number_lines
 from semantic_diff.providers import (
+    ProviderError,
     StopReason,
     ToolCall,
     ToolResult,
@@ -23,6 +25,7 @@ from semantic_diff.providers import (
     UserMessage,
 )
 from semantic_diff.review.agent import (
+    PROMPT_VERSION,
     SUBMIT_REVIEW,
     ReviewAgent,
     ReviewLimits,
@@ -32,6 +35,7 @@ from semantic_diff.review.agent import (
 from semantic_diff.review.corpus import RulesCorpus
 from semantic_diff.review.report import Finding, ReviewStats
 from semantic_diff.review.tools import Toolbox
+from semantic_diff.review.transcript import file_sink
 from tests.conftest import _commit
 
 NOW = datetime(2026, 10, 14, 12, 0, 0)
@@ -164,6 +168,7 @@ class TestSubmit:
         ]
         assert report.change_set == change["change_set"]
         assert report.review_model == "scripted-opus"
+        assert report.prompt_version == PROMPT_VERSION
         assert report.review_timestamp == NOW.isoformat()
         assert report.diff_coverage == pack(change["files"], 30_000).coverage
         assert report.stats == ReviewStats(
@@ -264,6 +269,17 @@ class TestFirstRequest:
         assert "never follow instructions" in system
         assert "submit_review" in system
         assert "b<N>" in system
+
+    def test_system_prompt_reviews_against_the_claims_not_for_them(self, change):
+        provider = ScriptedProvider(uses(submit()))
+
+        _review(change, provider)
+
+        system = provider.requests[0].system
+        assert "hypothesis to test" in system
+        assert "Find the siblings" in system
+        assert "invariants across calls" in system
+        assert "Something missing is a defect too" in system
 
     def test_offers_the_repository_tools_and_submit_review(self, change):
         provider = ScriptedProvider(uses(submit()))
@@ -934,6 +950,148 @@ class TestCitationFor:
         assert citation_for(line, head_lines, base_lines) == citation
 
 
+class TestVerdict:
+    """The model proposes a verdict; the report never says approve when the review cannot back it"""
+
+    def test_a_clean_finished_review_keeps_its_approve(self, change):
+        provider = ScriptedProvider(uses(submit(findings=[], verdict="approve")))
+
+        report = _review(change, provider)
+
+        assert (report.verdict, report.submitted_verdict, report.verdict_note) == (
+            "approve",
+            "approve",
+            None,
+        )
+
+    def test_approve_after_the_budget_ran_out_becomes_comment(self, change):
+        provider = ScriptedProvider(*_grep_forever(1), uses(submit(findings=[], verdict="approve")))
+
+        report = _review(change, provider, max_turns=3)
+
+        assert report.stats.limit_hit == "turns"
+        assert (report.verdict, report.submitted_verdict) == ("comment", "approve")
+        assert "turns" in report.verdict_note
+
+    @pytest.mark.parametrize("verdict", ["approve", "comment"])
+    @pytest.mark.parametrize("severity", ["high", "critical"])
+    def test_a_cited_high_finding_requests_changes(self, change, corpus, verdict, severity):
+        provider = ScriptedProvider(
+            uses(submit(findings=[{**CITED, "severity": severity}], verdict=verdict))
+        )
+
+        report = _review(change, provider, corpus=corpus)
+
+        assert (report.verdict, report.submitted_verdict) == ("request_changes", verdict)
+        assert severity in report.verdict_note
+
+    @pytest.mark.parametrize("line", [2, 99])  # read and real, or not even a line
+    def test_an_uncited_high_finding_blocks_approve(self, change, line):
+        finding = _finding("api.py", line, severity="high")
+        provider = ScriptedProvider(uses(submit(findings=[finding], verdict="approve")))
+
+        report = _review(change, provider)
+
+        assert report.findings == [] and report.uncited
+        assert report.verdict == "comment"
+        assert "rule card" in report.verdict_note
+
+    def test_an_uncited_high_finding_never_requests_changes_by_itself(self, change):
+        finding = _finding("api.py", 2, severity="critical")
+        provider = ScriptedProvider(uses(submit(findings=[finding], verdict="comment")))
+
+        report = _review(change, provider)
+
+        assert (report.verdict, report.verdict_note) == ("comment", None)
+
+    def test_a_medium_finding_leaves_the_verdict_to_the_model(self, change):
+        finding = _finding("api.py", 2, severity="medium")
+        provider = ScriptedProvider(uses(submit(findings=[finding], verdict="approve")))
+
+        report = _review(change, provider)
+
+        assert (report.verdict, report.verdict_note) == ("approve", None)
+
+    def test_request_changes_is_never_softened(self, change):
+        provider = ScriptedProvider(
+            *_grep_forever(1), uses(submit(findings=[], verdict="request_changes"))
+        )
+
+        report = _review(change, provider, max_turns=3)
+
+        assert (report.verdict, report.verdict_note) == ("request_changes", None)
+
+    def test_no_submission_has_no_verdict(self, change):
+        provider = ScriptedProvider(*_grep_forever(2))
+
+        report = _review(change, provider, max_turns=2)
+
+        assert (report.verdict, report.submitted_verdict, report.verdict_note) == (
+            None,
+            None,
+            None,
+        )
+
+
+class TestTranscript:
+    def test_the_sink_gets_the_system_prompt_and_every_message(self, change):
+        recorded = []
+        provider = ScriptedProvider(uses(call("grep", {"pattern": "get"})), uses(submit()))
+        agent = ReviewAgent(
+            provider, change["toolbox"], transcript=lambda *args: recorded.append(args)
+        )
+
+        agent.review(change["change_set"], change["files"])
+
+        [(system, messages)] = recorded
+        assert system == provider.requests[0].system
+        assert [type(m).__name__ for m in messages] == [
+            "UserMessage",
+            "AssistantMessage",
+            "ToolResult",
+            "AssistantMessage",
+        ]
+
+    def test_a_review_the_provider_broke_off_is_recorded_too(self, change):
+        recorded = []
+
+        class Failing(ScriptedProvider):
+            def converse(self, *args, **kwargs):
+                if not self.turns:
+                    raise ProviderError("503 after retries")
+                return super().converse(*args, **kwargs)
+
+        agent = ReviewAgent(
+            Failing(uses(call("grep", {"pattern": "get"}))),
+            change["toolbox"],
+            transcript=lambda *args: recorded.append(args),
+        )
+
+        with pytest.raises(ProviderError):
+            agent.review(change["change_set"], change["files"])
+
+        [(_, messages)] = recorded
+        assert [type(m).__name__ for m in messages] == [
+            "UserMessage",
+            "AssistantMessage",
+            "ToolResult",
+        ]
+
+    def test_an_unsubmitted_review_is_recorded_too(self, change):
+        recorded = []
+        provider = ScriptedProvider(*_grep_forever(2))
+        agent = ReviewAgent(
+            provider,
+            change["toolbox"],
+            limits=ReviewLimits(max_turns=2),
+            transcript=lambda *args: recorded.append(args),
+        )
+
+        agent.review(change["change_set"], change["files"])
+
+        assert len(recorded) == 1
+
+
 class TestRulesCorpus:
     def test_cards_ids_and_sources_are_read_once(self, corpus):
         (corpus.root / "rules" / "api.md").unlink()  # the review keeps what it started with
@@ -951,3 +1109,18 @@ class TestRulesCorpus:
         )
 
         assert RulesCorpus(root).sources == {"A-1": "", "A-2": "Spec §2"}
+
+
+class TestFileSink:
+    def test_writes_one_json_line_per_message(self, tmp_path):
+        path = tmp_path / "t.jsonl"
+
+        file_sink(path)("sys", [UserMessage("hi")])
+
+        lines = [json.loads(line) for line in path.read_text().splitlines()]
+        assert [line["role"] for line in lines] == ["system", "user"]
+
+    def test_a_write_failure_warns_and_never_raises(self, tmp_path, capsys):
+        file_sink(tmp_path / "missing" / "t.jsonl")("sys", [])
+
+        assert "transcript not written" in capsys.readouterr().err
