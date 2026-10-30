@@ -28,7 +28,7 @@ from semantic_diff.redaction import Redactor
 from semantic_diff.review.agent import ReviewAgent, ReviewLimits
 from semantic_diff.review.corpus import RulesCorpus
 from semantic_diff.review.markdown import ReviewMarkdownFormatter
-from semantic_diff.review.mr_comment import MARKER, comment_body
+from semantic_diff.review.mr_comment import MARKER, comment_body, no_changes_body
 from semantic_diff.review.tools import Toolbox
 from semantic_diff.review.transcript import file_sink
 from semantic_diff.review.withheld import DEFAULT_WITHHELD, WithheldPaths
@@ -86,6 +86,16 @@ def main():
     pass
 
 
+_redact_option = click.option(
+    "--redact/--no-redact",
+    default=True,
+    show_default=True,
+    help="Erase secrets and personal data (pii-eraser, code profile) from the diff, "
+    "title, description, commit subjects and, in review, every file the tools read, "
+    "before the model sees them",
+)
+
+
 def _output_options(command):
     """Options shared by every analysis command."""
     options = [
@@ -97,6 +107,7 @@ def _output_options(command):
             "--brief", "-b", is_flag=True, help="Brief output (intent + risk + top questions)"
         ),
         click.option("--verbose", "-v", is_flag=True, help="Verbose output"),
+        _redact_option,
         click.option(
             "--max-diff-tokens",
             type=click.IntRange(min=1),
@@ -252,13 +263,7 @@ def mr_cmd(
     help="Write the whole review conversation here as JSON lines "
     "(it holds the diff and the code the reviewer read: keep it where the code may live)",
 )
-@click.option(
-    "--redact/--no-redact",
-    default=True,
-    show_default=True,
-    help="Erase secrets and personal data (pii-eraser, code profile) from the diff, "
-    "title, description and every file the reviewer reads, before the model sees them",
-)
+@_redact_option
 @click.option(
     "--withhold",
     multiple=True,
@@ -301,6 +306,8 @@ def review_cmd(
         change_set, files = collect(parser)
         if change_set is None or not files:
             click.echo("No changes found.", err=True)
+            if gitlab_comment:
+                _clear_gitlab_comment()
             sys.exit(0)
 
         redactor = Redactor() if redact else None
@@ -366,6 +373,19 @@ def _post_gitlab_comment(report) -> None:
     click.echo(f"MR comment {outcome}.", err=True)
 
 
+def _clear_gitlab_comment() -> None:
+    """Nothing to review now: an earlier review's note must not stand as if current.
+    Only an existing note is edited; no note is added to say there is nothing."""
+    try:
+        note = MergeRequestNote(MergeRequestTarget.from_env(os.environ))
+        outcome = note.upsert(no_changes_body(), MARKER, create=False)
+    except (NoteError, ValueError, KeyError, TypeError) as e:
+        click.echo(f"Warning: MR comment not updated: {e}", err=True)
+        return
+    if outcome == "updated":
+        click.echo("MR comment updated: no changes to review.", err=True)
+
+
 def _supports_tools(provider) -> bool:
     # RetryingProvider forwards converse() to the adapter it wraps
     return callable(getattr(getattr(provider, "inner", provider), "converse", None))
@@ -387,6 +407,7 @@ def _run(
     save: bool,
     brief: bool,
     verbose: bool,
+    redact: bool,
     max_diff_tokens: int,
     max_output_tokens: int,
 ):
@@ -411,6 +432,12 @@ def _run(
         if change_set is None or not files:
             click.echo("No changes found.", err=True)
             sys.exit(0)
+
+        if redact:
+            redactor = Redactor()
+            change_set, files = redactor.change(change_set, files)
+            if verbose:
+                click.echo(f"Redacted {redactor.erased} value(s) before the model", err=True)
 
         if verbose:
             click.echo("Calling LLM for analysis...", err=True)

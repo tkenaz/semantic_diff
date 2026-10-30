@@ -137,7 +137,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: tkenaz/semantic_diff@v0.6.0
+      - uses: tkenaz/semantic_diff@v0.7.0
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           comment_on_pr: true
@@ -235,7 +235,16 @@ SEMANTIC_DIFF_PROVIDER=openai
 SEMANTIC_DIFF_BASE_URL=https://your-gateway.example/v1
 SEMANTIC_DIFF_API_KEY=...
 SEMANTIC_DIFF_MODEL=claude-sonnet-4.6   # required: model ids differ per gateway
+SEMANTIC_DIFF_SEED=42                   # optional: see below
 ```
+
+`SEMANTIC_DIFF_SEED` sends a sampling seed with every request. Where the
+gateway honours it (vLLM does), a rerun with the same seed over the same
+change is the same run, which shows whether a verdict is stable; a rerun
+without one is a second opinion. Gateways may ignore the seed, and batching
+can still vary the output, so treat it as best effort. The Anthropic API
+takes no seed: the `anthropic` provider refuses the variable rather than
+ignore it.
 
 Retries (rate limits honour `Retry-After`, timeouts, 5xx) are handled once for
 all providers: `SEMANTIC_DIFF_MAX_RETRIES` (attempts, default 3) and
@@ -283,7 +292,8 @@ semantic-diff review --gitlab-env --json   # inside a GitLab MR pipeline
   subjects and everything the tools read go through one
   [pii-eraser](https://github.com/tkenaz/pii-eraser) session, so a value
   keeps one placeholder everywhere and line numbers still hold. The report
-  says how many values were erased. `mr` and `analyze` do not redact yet.
+  says how many values were erased. `mr` and `analyze` erase the same way
+  (diff, title, description, commit subjects), with the same `--no-redact`.
 - Files where secrets live by convention are never read by the tools,
   whatever their contents: `read_file` and `read_base` refuse them and
   `grep` leaves their hits out (and says how many). Redaction is then a
@@ -300,7 +310,10 @@ semantic-diff review --gitlab-env --json   # inside a GitLab MR pipeline
   access token with the `api` scope and the Reporter role is enough. The note
   shows the verdict and the cited findings; uncited high-severity findings stay
   in the open, each with the reason it is uncited (without `--rules` that is
-  every finding), and the rest are folded away. Posting is advisory: if it fails, the job warns and goes on.
+  every finding), and the rest are folded away. When a later run finds no
+  changes to review, it edits the note to say so instead of leaving the old
+  review standing (and adds no note if there was none). Posting is advisory:
+  if it fails, the job warns and goes on.
 
 #### Cited findings and the rule corpus
 

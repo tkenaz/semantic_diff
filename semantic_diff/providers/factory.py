@@ -14,6 +14,7 @@ DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5"
 # Long answers on big merge requests take minutes. An explicit timeout also lifts the
 # Anthropic SDK's refusal of large non-streaming max_tokens.
 CLIENT_TIMEOUT_SECONDS = 900.0
+SEED_VARIABLE = "SEMANTIC_DIFF_SEED"
 
 
 def _require(name: str) -> str:
@@ -23,7 +24,23 @@ def _require(name: str) -> str:
     return value
 
 
+def _seed() -> Optional[int]:
+    value = os.getenv(SEED_VARIABLE)
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        raise ValueError(f"{SEED_VARIABLE} must be an integer, got {value!r}") from None
+
+
 def _anthropic(model: Optional[str]) -> LLMProvider:
+    # Refused rather than ignored: a run that claims to be reproducible must be
+    if _seed() is not None:
+        raise ValueError(
+            f"{SEED_VARIABLE} works only with an OpenAI-compatible gateway "
+            "(SEMANTIC_DIFF_PROVIDER=openai): the Anthropic API takes no seed"
+        )
     try:
         import anthropic
     except ImportError as e:
@@ -57,7 +74,7 @@ def _openai_compat(model: Optional[str]) -> LLMProvider:
     # No default model: model ids differ per gateway, a guess would just 404.
     if not model:
         raise ValueError("SEMANTIC_DIFF_MODEL not found in environment (required for 'openai')")
-    return OpenAICompatProvider(client=client, model=model)
+    return OpenAICompatProvider(client=client, model=model, seed=_seed())
 
 
 PROVIDERS: Dict[str, Callable[[Optional[str]], LLMProvider]] = {

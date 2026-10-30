@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-30
+
+### Added
+- `SEMANTIC_DIFF_SEED`: a sampling seed sent with every request to an
+  OpenAI-compatible gateway. Where the gateway honours it, a rerun with the
+  same seed shows whether a verdict is stable; without one, a rerun is a
+  second opinion. The `anthropic` provider refuses the variable (the API
+  takes no seed) rather than silently ignore it.
+
+### Security
+- `mr` and `analyze` erase secrets and personal data before the model sees
+  them, like `review`: the diff, the title, the description and commit
+  subjects (`--redact`, on by default; `--no-redact` to opt out).
+
+### Fixed
+- `review --gitlab-comment` on a merge request with nothing left to review
+  edits the earlier note to say so, instead of leaving a stale review
+  standing as if current. No note is added when there was none.
+
 ## [0.6.0] - 2026-10-30
 
 ### Changed

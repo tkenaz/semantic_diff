@@ -173,6 +173,23 @@ class TestReview:
         assert "No changes found" in result.stderr
         assert model.requests == []
 
+    def test_empty_range_retires_an_earlier_comment_without_adding_one(self, mr_repo, model):
+        with patch("semantic_diff.cli.MergeRequestNote") as note:
+            note.return_value.upsert.return_value = "updated"
+            result = CliRunner().invoke(
+                main,
+                ["review", "--base", "feature", "--head", "feature", "--repo", mr_repo["path"]]
+                + ["--gitlab-comment"],
+                env=NOTE_ENV,
+            )
+
+        assert result.exit_code == 0
+        (body, marker), kwargs = note.return_value.upsert.call_args
+        assert body.startswith(marker) and "No changes to review" in body
+        assert kwargs == {"create": False}
+        assert "MR comment updated: no changes to review." in result.stderr
+        assert model.requests == []
+
     def test_provider_without_tool_calling_is_refused_clearly(self, mr_repo):
         class CompletionOnly:
             model = "m"
