@@ -24,7 +24,13 @@ def _require(name: str) -> str:
 
 
 def _anthropic(model: Optional[str]) -> LLMProvider:
-    import anthropic
+    try:
+        import anthropic
+    except ImportError as e:
+        raise ValueError(
+            "Provider 'anthropic' needs: pip install 'semantic-diff[anthropic]' "
+            "(or set SEMANTIC_DIFF_PROVIDER=openai for an OpenAI-compatible gateway)"
+        ) from e
 
     from semantic_diff.providers.anthropic_provider import AnthropicProvider
 

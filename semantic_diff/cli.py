@@ -31,6 +31,7 @@ from semantic_diff.review.markdown import ReviewMarkdownFormatter
 from semantic_diff.review.mr_comment import MARKER, comment_body
 from semantic_diff.review.tools import Toolbox
 from semantic_diff.review.transcript import file_sink
+from semantic_diff.review.withheld import DEFAULT_WITHHELD, WithheldPaths
 from semantic_diff.user_env import load_user_env
 
 REPORTS_DIR_NAME = "semantic_diff_reports"
@@ -259,6 +260,15 @@ def mr_cmd(
     "title, description and every file the reviewer reads, before the model sees them",
 )
 @click.option(
+    "--withhold",
+    multiple=True,
+    metavar="GLOB",
+    envvar="SEMANTIC_DIFF_WITHHOLD",
+    help="More files the reviewer's tools never read, on top of the defaults "
+    "(.env, keys, credentials, secrets/); a pattern without '/' matches the file name. "
+    "Repeatable; the env var takes them space-separated",
+)
+@click.option(
     "--gitlab-comment",
     is_flag=True,
     help="Post the review as one MR note, updated in place on every run "
@@ -281,6 +291,7 @@ def review_cmd(
     rules: Optional[Path],
     transcript: Optional[Path],
     redact: bool,
+    withhold: Tuple[str, ...],
     gitlab_comment: bool,
 ):
     """Review a merge request: an agent reads around the change and reports findings."""
@@ -317,7 +328,11 @@ def review_cmd(
             diff_budget_tokens=max_diff_tokens,
         )
         toolbox = Toolbox(
-            parser.repo, head=change_set.head_sha, base=change_set.base_sha, redactor=redactor
+            parser.repo,
+            head=change_set.head_sha,
+            base=change_set.base_sha,
+            redactor=redactor,
+            withheld=WithheldPaths(DEFAULT_WITHHELD + withhold),
         )
         sink = file_sink(transcript) if transcript else None
         report = ReviewAgent(provider, toolbox, limits, corpus=corpus, transcript=sink).review(

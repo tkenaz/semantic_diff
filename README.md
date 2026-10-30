@@ -20,8 +20,13 @@ Regular `git diff` shows *what* changed. `semantic-diff` shows:
 ## Installation
 
 ```bash
-pip install semantic-diff
+pip install 'semantic-diff[anthropic]'   # Anthropic API (the default provider)
+pip install 'semantic-diff[openai]'      # an OpenAI-compatible gateway
 ```
+
+The core package carries no vendor SDK: an install holds only the client it
+was asked for, so a runner meant to talk to one gateway has no other client
+to fall back on. Without an extra, the CLI says which one to install.
 
 ## Quick Start
 
@@ -132,7 +137,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: tkenaz/semantic_diff@v0.5.2
+      - uses: tkenaz/semantic_diff@v0.6.0
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           comment_on_pr: true
@@ -279,6 +284,15 @@ semantic-diff review --gitlab-env --json   # inside a GitLab MR pipeline
   [pii-eraser](https://github.com/tkenaz/pii-eraser) session, so a value
   keeps one placeholder everywhere and line numbers still hold. The report
   says how many values were erased. `mr` and `analyze` do not redact yet.
+- Files where secrets live by convention are never read by the tools,
+  whatever their contents: `read_file` and `read_base` refuse them and
+  `grep` leaves their hits out (and says how many). Redaction is then a
+  second layer, not the only one. A changed file of this kind still reaches
+  the model through its diff, erased like every other diff. The defaults:
+  `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `id_rsa*`, `id_dsa*`, `id_ecdsa*`, `id_ed25519*`, `.netrc`, `.npmrc`, `.pypirc`, `.git-credentials`, `credentials`, `credentials.*`, `*.tfvars`, `*.tfstate`, `*.tfstate.*`, `secrets/*`, `*/secrets/*`.
+  A pattern without `/` matches the file name in any directory; one with `/`
+  matches the path from the repository root. Add more with `--withhold GLOB`
+  (repeatable) or `SEMANTIC_DIFF_WITHHOLD` (space-separated).
 - `--gitlab-comment` posts the review to the merge request as one note and
   edits that same note on every later run (it carries a hidden marker; only
   notes by the token's own user are matched). The token comes from

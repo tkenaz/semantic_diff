@@ -76,11 +76,13 @@ runs:
         ACTION_REF: ${{ github.action_ref }}
         # A local action (uses: ./) has neither: install the checkout it runs from
         ACTION_PATH: ${{ github.action_path }}
+      # The action talks to Anthropic, so it asks for that extra; the core
+      # package carries no vendor SDK
       run: |
         if [ -z "$ACTION_REPO" ]; then
-          pip install "$ACTION_PATH"
+          pip install "${ACTION_PATH}[anthropic]"
         else
-          pip install "git+https://github.com/${ACTION_REPO}@${ACTION_REF}"
+          pip install "semantic-diff[anthropic] @ git+https://github.com/${ACTION_REPO}@${ACTION_REF}"
         fi
 
     - name: Run semantic-diff

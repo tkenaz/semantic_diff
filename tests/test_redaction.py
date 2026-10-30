@@ -15,6 +15,7 @@ from semantic_diff.cli import main
 from semantic_diff.models import ChangeSet, CommitRef, FileChange
 from semantic_diff.redaction import Redactor
 from semantic_diff.review.tools import Toolbox
+from semantic_diff.review.withheld import WithheldPaths
 from tests.conftest import _commit
 from tests.test_review_agent import ScriptedProvider, call, submit, uses
 
@@ -93,6 +94,8 @@ class TestToolbox:
             head=secret_repo["head"].hexsha,
             base=secret_repo["base"].hexsha,
             redactor=Redactor(),
+            # Redaction on its own: .env would otherwise be withheld unread
+            withheld=WithheldPaths(()),
         )
 
     def test_grep_keeps_path_and_line_number(self, toolbox):

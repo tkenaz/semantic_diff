@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-30
+
+### Changed
+- **Breaking:** the `anthropic` SDK is an extra now, like `openai`:
+  `pip install 'semantic-diff[anthropic]'` for the Anthropic API. The core
+  package carries no vendor SDK, so an install meant for one gateway has no
+  other client on board to reach a vendor endpoint by accident. Without the
+  extra, the `anthropic` provider stops with the install hint. The GitHub
+  Action installs the extra itself.
+
+### Security
+- The review tools never read files where secrets live by convention
+  (`.env*`, private keys and keystores, `id_*` SSH keys, `.netrc`, `.npmrc`,
+  `.pypirc`, `.git-credentials`, `credentials*`, Terraform vars and state,
+  `secrets/` directories), whatever their contents: `read_file` and
+  `read_base` refuse them, `grep` leaves their hits out and says how many.
+  Redaction becomes a second layer, not the only boundary. Their diffs still
+  reach the model, erased. `--withhold GLOB` / `SEMANTIC_DIFF_WITHHOLD` adds
+  patterns.
+
 ## [0.5.2] - 2026-10-29
 
 ### Security
