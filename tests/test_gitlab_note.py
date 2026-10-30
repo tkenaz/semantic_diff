@@ -193,3 +193,19 @@ def redirecting_server():
     for server in (target, api):
         server.shutdown()
         server.server_close()
+
+
+class TestUpdateOnly:
+    def test_edits_an_existing_note(self):
+        gitlab = FakeGitLab([[_note(2, ME, MARKER)]])
+        note = MergeRequestNote(MergeRequestTarget.from_env(ENV), gitlab)
+
+        assert note.upsert("now", MARKER, create=False) == "updated"
+        assert gitlab.writes() == [("PUT", f"{NOTES}/2", {"body": "now"})]
+
+    def test_adds_nothing_when_there_is_none(self):
+        gitlab = FakeGitLab([[_note(3, SOMEONE, MARKER)]])
+        note = MergeRequestNote(MergeRequestTarget.from_env(ENV), gitlab)
+
+        assert note.upsert("now", MARKER, create=False) == "absent"
+        assert gitlab.writes() == []

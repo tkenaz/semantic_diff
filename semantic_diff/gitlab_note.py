@@ -77,14 +77,17 @@ class MergeRequestNote:
         self._target = target
         self._transport = transport
 
-    def upsert(self, body: str, marker: str) -> str:
-        """Edit our marked note if there is one, else add it; returns "created" or "updated"."""
+    def upsert(self, body: str, marker: str, *, create: bool = True) -> str:
+        """Edit our marked note if there is one, else add it (unless create is False);
+        returns "created", "updated" or "absent"."""
         me = self._call("GET", "/user")["id"]
         notes = self._notes_path()
         for note in self._pages(notes):
             if note.get("author", {}).get("id") == me and marker in note.get("body", ""):
                 self._call("PUT", f"{notes}/{note['id']}", {"body": body})
                 return "updated"
+        if not create:
+            return "absent"
         self._call("POST", notes, {"body": body})
         return "created"
 

@@ -4,7 +4,7 @@ Adapter: OpenAI Chat Completions protocol, for any compatible gateway
 """
 
 import json
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 import openai
 
@@ -33,9 +33,12 @@ STOP_REASONS = {"tool_calls": StopReason.TOOL_USE, "length": StopReason.MAX_TOKE
 
 
 class OpenAICompatProvider:
-    def __init__(self, client: openai.OpenAI, model: str):
+    def __init__(self, client: openai.OpenAI, model: str, seed: Optional[int] = None):
         self.client = client
         self.model = model
+        # Same seed, same request: the same answer where the gateway honours it
+        # (vLLM does); a rerun without one is a second opinion
+        self.seed = seed
 
     def complete(self, prompt: str, *, max_tokens: int) -> Completion:
         response = self._create(
@@ -93,6 +96,8 @@ class OpenAICompatProvider:
         )
 
     def _create(self, **request):
+        if self.seed is not None:
+            request["seed"] = self.seed
         try:
             return self.client.chat.completions.create(**request)
         except openai.RateLimitError as e:

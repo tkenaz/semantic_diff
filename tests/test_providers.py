@@ -181,6 +181,24 @@ class TestOpenAICompatProvider:
             messages=[{"role": "user", "content": "prompt"}],
         )
 
+    def test_a_seed_goes_with_every_request(self):
+        client = Mock()
+        client.chat.completions.create.return_value = _chat_completion("x")
+        provider = OpenAICompatProvider(client=client, model="m", seed=7)
+
+        provider.complete("p", max_tokens=1)
+        provider.converse("s", [], [], max_tokens=1)
+
+        assert [c.kwargs["seed"] for c in client.chat.completions.create.call_args_list] == [7, 7]
+
+    def test_no_seed_by_default(self):
+        client = Mock()
+        client.chat.completions.create.return_value = _chat_completion("x")
+
+        OpenAICompatProvider(client=client, model="m").complete("p", max_tokens=1)
+
+        assert "seed" not in client.chat.completions.create.call_args.kwargs
+
     def test_empty_content_is_provider_error(self):
         client = Mock()
         client.chat.completions.create.return_value = _chat_completion(None)
@@ -547,6 +565,35 @@ class TestBuildProvider:
         assert inner.client.api_key == "gateway-key"
         assert inner.client.max_retries == 0
         assert provider.model == "claude-sonnet-4.6"
+
+    def test_seed_from_env_reaches_the_openai_provider(self):
+        env = {
+            "SEMANTIC_DIFF_PROVIDER": "openai",
+            "SEMANTIC_DIFF_API_KEY": "k",
+            "SEMANTIC_DIFF_BASE_URL": "https://llm.example/v1",
+            "SEMANTIC_DIFF_MODEL": "m",
+            "SEMANTIC_DIFF_SEED": "42",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            assert build_provider(load_env=False).inner.seed == 42
+
+    def test_a_seed_is_refused_for_anthropic_not_ignored(self):
+        env = {"ANTHROPIC_API_KEY": "k", "SEMANTIC_DIFF_SEED": "42"}
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(ValueError, match="only with an OpenAI-compatible gateway"):
+                build_provider(load_env=False)
+
+    def test_a_seed_must_be_an_integer(self):
+        env = {
+            "SEMANTIC_DIFF_PROVIDER": "openai",
+            "SEMANTIC_DIFF_API_KEY": "k",
+            "SEMANTIC_DIFF_BASE_URL": "https://llm.example/v1",
+            "SEMANTIC_DIFF_MODEL": "m",
+            "SEMANTIC_DIFF_SEED": "abc",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(ValueError, match="must be an integer"):
+                build_provider(load_env=False)
 
     def test_model_from_env_applies_to_anthropic(self):
         with patch.dict(

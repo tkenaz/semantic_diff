@@ -101,6 +101,17 @@ def comment_body(report: ReviewReport) -> str:
     return "\n".join(lines)
 
 
+def no_changes_body() -> str:
+    return "\n".join(
+        [
+            MARKER,
+            "## 🔍 Semantic Diff Review",
+            "",
+            "No changes to review on the latest run: the earlier review no longer applies.",
+        ]
+    )
+
+
 def _ranked(findings: List[Finding]) -> List[Finding]:
     return sorted(findings, key=lambda f: SEVERITY_ORDER.index(f.severity))
 

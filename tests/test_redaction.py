@@ -151,3 +151,42 @@ class TestRedactor:
 
         assert redactor("") == ""
         assert redactor.erased == 0
+
+
+class TestAnalyzeAndMr:
+    """The one-call commands send the diff, title, description and commit
+    subjects too, so they erase the same way review does"""
+
+    def _sent(self, secret_repo, mock_mr_analysis, *args):
+        with (
+            patch("semantic_diff.cli.build_provider"),
+            patch("semantic_diff.cli.LLMAnalyzer") as analyzer,
+        ):
+            analyzer.return_value.analyze.return_value = mock_mr_analysis
+            result = CliRunner().invoke(main, [*args, "--repo", secret_repo["path"], "--json"])
+        assert result.exit_code == 0, result.output
+        change_set, files, _context = analyzer.return_value.analyze.call_args.args
+        return change_set.model_dump_json() + "".join(f.diff_content for f in files)
+
+    @pytest.mark.parametrize(
+        "command", [["mr", "--base", "target", "--head", "feature"], ["analyze", "feature"]]
+    )
+    def test_secrets_are_erased(self, secret_repo, mock_mr_analysis, command):
+        sent = self._sent(secret_repo, mock_mr_analysis, *command)
+
+        assert _secrets_in(sent) == []
+        assert "[SECRET_" in sent
+
+    def test_no_redact_sends_them_as_written(self, secret_repo, mock_mr_analysis):
+        sent = self._sent(
+            secret_repo,
+            mock_mr_analysis,
+            "mr",
+            "--base",
+            "target",
+            "--head",
+            "feature",
+            "--no-redact",
+        )
+
+        assert set(_secrets_in(sent)) == {IN_DIFF, IN_SUBJECT}
