@@ -3,8 +3,9 @@ Read-only tools the review agent calls to look around the change.
 
 Everything is read from git objects at the merge request's head and base SHAs,
 never from the working tree: a review is reproducible, and nothing that is not
-committed (local secrets, build output) can reach the model. Output is capped
-per call; a cap always says how to get the rest.
+committed (local secrets, build output) can reach the model, and files where
+secrets live by convention (.env, keys, credentials) are not read at all.
+Output is capped per call; a cap always says how to get the rest.
 """
 
 import inspect
@@ -15,6 +16,7 @@ from git import GitCommandError, Repo
 
 from semantic_diff.providers import ToolCall, ToolResult, ToolSpec
 from semantic_diff.redaction import Redactor
+from semantic_diff.review.withheld import WithheldPaths
 
 LINE_CUT = 300
 
@@ -99,6 +101,7 @@ class Toolbox:
         max_entries: int = 300,
         git_timeout: float = 20.0,
         redactor: Optional[Redactor] = None,
+        withheld: Optional[WithheldPaths] = None,
     ):
         self.repo = repo
         self.head = head
@@ -110,6 +113,7 @@ class Toolbox:
         self.git_timeout = git_timeout
         # File text, grep hits and commit subjects are erased before numbering
         self.redactor = redactor
+        self.withheld = withheld or WithheldPaths()
 
     @property
     def specs(self) -> Tuple[ToolSpec, ...]:
@@ -166,13 +170,17 @@ class Toolbox:
             raise ToolError(f"grep failed: {stderr}") from e
 
         prefix = f"{self.head}:"
-        matches = [_cut(self._erased_hit(line.removeprefix(prefix))) for line in out.splitlines()]
+        hits = [line.removeprefix(prefix) for line in out.splitlines()]
+        kept = [hit for hit in hits if not self.withheld(hit.split(":", 1)[0])]
+        matches = [_cut(self._erased_hit(hit)) for hit in kept]
         shown = matches[: self.max_matches]
         if len(shown) < len(matches):
             shown.append(
                 f"[{len(shown)} of {len(matches)} matches shown; narrow the pattern or path_glob]"
             )
-        return "\n".join(shown)
+        if len(kept) < len(hits):
+            shown.append(f"[{len(hits) - len(kept)} matches in withheld files not shown]")
+        return "\n".join(shown) or "no matches"
 
     def list_dir(self, path: str = "") -> str:
         path = _clean_path(_string("path", path), allow_root=True)
@@ -251,6 +259,11 @@ class Toolbox:
         end_line: Optional[int],
     ) -> str:
         path = _clean_path(_string("path", path))
+        if self.withheld(path):
+            raise ToolError(
+                f"{path} is withheld: files where secrets live by convention are not read; "
+                "its changes, if any, are in the diff"
+            )
         start = _integer("start_line", start_line, default=1)
         end = _integer("end_line", end_line, default=None)
         if start < 1:

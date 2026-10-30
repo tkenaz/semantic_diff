@@ -2,7 +2,6 @@
 LLM providers: a port (LLMProvider), vendor adapters, retries and the factory.
 """
 
-from semantic_diff.providers.anthropic_provider import AnthropicProvider
 from semantic_diff.providers.base import (
     AssistantMessage,
     Completion,
@@ -23,11 +22,11 @@ from semantic_diff.providers.base import (
 from semantic_diff.providers.factory import PROVIDERS, build_provider
 from semantic_diff.providers.retrying import RetryingProvider
 
-# OpenAICompatProvider is importable by name (see __getattr__) but kept out of
-# __all__: `import *` must work without the optional `openai` extra.
+# The vendor adapters are importable by name (see __getattr__) but kept out of
+# __all__: `import *` must work without the optional `anthropic` and `openai`
+# extras, so an install that leaves a vendor SDK out cannot reach it by accident.
 __all__ = [
     "PROVIDERS",
-    "AnthropicProvider",
     "AssistantMessage",
     "Completion",
     "LLMProvider",
@@ -49,7 +48,11 @@ __all__ = [
 
 
 def __getattr__(name):
-    # Lazy: importing the package must not require the optional `openai` extra.
+    # Lazy: importing the package must not require an optional vendor extra.
+    if name == "AnthropicProvider":
+        from semantic_diff.providers.anthropic_provider import AnthropicProvider
+
+        return AnthropicProvider
     if name == "OpenAICompatProvider":
         from semantic_diff.providers.openai_compat import OpenAICompatProvider
 

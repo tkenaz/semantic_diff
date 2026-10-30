@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "semantic-diff"
-version = "0.5.2"
+version = "0.6.0"
 description = "AI-powered semantic analysis and agentic review of git commits and merge requests"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,8 +20,8 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
+# No vendor SDK in the core: an install carries only the client it was asked for
 dependencies = [
-    "anthropic>=0.40.0",
     "click>=8.1.0",
     "rich>=13.0.0",
     "python-dotenv>=1.0.0",
@@ -31,6 +31,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+anthropic = [
+    "anthropic>=0.40.0",
+]
 openai = [
     "openai>=1.40.0",
 ]
@@ -40,6 +43,7 @@ dev = [
     "black>=23.0.0",
     "ruff>=0.1.0",
     "mypy>=1.0.0",
+    "anthropic>=0.40.0",
     "openai>=1.40.0",
     "mutmut>=3.0.0",
     "pyyaml",  # tests execute action.yml steps
