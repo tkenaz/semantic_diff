@@ -155,7 +155,9 @@ class TestReview:
     def test_model_flag_reaches_the_provider(self, mr_repo, model):
         _review(mr_repo, "--model", "claude-opus-4.6")
 
-        model.factory.assert_called_once_with(model="claude-opus-4.6")
+        model.factory.assert_called_once_with(
+            model="claude-opus-4.6", max_retries=5, max_total_wait=180.0
+        )
 
     def test_base_is_required(self, mr_repo, model):
         result = CliRunner().invoke(main, ["review", "--repo", mr_repo["path"]])
@@ -197,7 +199,7 @@ class TestReview:
             def complete(self, prompt, *, max_tokens):
                 raise AssertionError("review must not fall back to complete()")
 
-        no_tools = RetryingProvider(CompletionOnly(), max_retries=1)
+        no_tools = RetryingProvider(CompletionOnly(), max_retries=0)
         with patch("semantic_diff.cli.build_provider", return_value=no_tools):
             result = _review(mr_repo)
 
@@ -206,7 +208,7 @@ class TestReview:
 
     def test_the_anthropic_provider_is_accepted_for_review(self, mr_repo):
         # KEN-315: the reviewer must run where only ANTHROPIC_API_KEY exists
-        provider = RetryingProvider(AnthropicProvider(client=Mock(), model="m"), max_retries=1)
+        provider = RetryingProvider(AnthropicProvider(client=Mock(), model="m"), max_retries=0)
         with patch("semantic_diff.cli.build_provider", return_value=provider):
             result = _review(mr_repo)
 

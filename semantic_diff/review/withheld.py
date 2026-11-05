@@ -6,12 +6,14 @@ whether or not their contents look like a secret, so the redactor is a
 second layer, not the only one. A changed file of this kind still reaches
 the model through its diff, erased like every other diff.
 
-A pattern without "/" matches the file name in any directory; one with "/"
-matches the whole path from the repository root (fnmatch: * crosses "/").
+Patterns follow semantic_diff.path_globs: a pattern without "/" matches the
+file name in any directory; one with "/" matches the whole path from the
+repository root (fnmatch: * crosses "/").
 """
 
-from fnmatch import fnmatchcase
-from typing import Iterable, Tuple
+from typing import Tuple
+
+from semantic_diff.path_globs import PathGlobs
 
 DEFAULT_WITHHELD: Tuple[str, ...] = (
     ".env",
@@ -40,12 +42,6 @@ DEFAULT_WITHHELD: Tuple[str, ...] = (
 )
 
 
-class WithheldPaths:
-    def __init__(self, patterns: Iterable[str] = DEFAULT_WITHHELD):
-        self.patterns = tuple(patterns)
-
-    def __call__(self, path: str) -> bool:
-        name = path.rsplit("/", 1)[-1]
-        return any(
-            fnmatchcase(path if "/" in pattern else name, pattern) for pattern in self.patterns
-        )
+class WithheldPaths(PathGlobs):
+    def __init__(self, patterns=DEFAULT_WITHHELD):
+        super().__init__(patterns)

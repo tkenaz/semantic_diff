@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** `SEMANTIC_DIFF_MAX_RETRIES` counts retries after the first
+  attempt, not attempts (0 now means no retry). Defaults are sized for CI:
+  5 retries within 180s of waiting (was 3 attempts within ~3.6s), backoff
+  from 2s doubling to at most 60s a step, plus 10-30% jitter.
+
+### Added
+- `--max-retries` and `--max-retry-wait` on `analyze`, `mr` and `review`
+  (env: `SEMANTIC_DIFF_MAX_RETRIES`, `SEMANTIC_DIFF_MAX_WAIT`).
+- A 429 honours `retry-after-ms`, `Retry-After` as an HTTP date, and
+  Anthropic's `anthropic-ratelimit-*-reset` of the exhausted limit, besides
+  `Retry-After` in seconds.
+- A run that gives up says whether it was rate limited (`Rate limited by the
+  LLM API (HTTP 429) ...`, with what to change) or another API failure.
+- `--pii-exclude GLOB` / `SEMANTIC_DIFF_PII_EXCLUDE`: files whose personal
+  data is synthetic (test fixtures). Only secrets are erased there.
+
+### Fixed
+- Addresses on reserved names (RFC 2606 / RFC 6761: `example.com/.net/.org`,
+  `*.test`, `*.example`, `*.invalid`, `localhost`) are no longer erased as
+  personal data, so fixtures stop adding placeholders and redaction counts.
+- `--withhold` patterns starting with `**/` also match at the repository root.
+
 ## [0.7.0] - 2026-10-30
 
 ### Added

@@ -83,10 +83,21 @@ PROVIDERS: Dict[str, Callable[[Optional[str]], LLMProvider]] = {
 }
 
 
-def build_provider(model: Optional[str] = None, *, load_env: bool = True) -> RetryingProvider:
+def build_provider(
+    model: Optional[str] = None,
+    *,
+    load_env: bool = True,
+    max_retries: Optional[int] = None,
+    max_total_wait: Optional[float] = None,
+) -> RetryingProvider:
+    """max_retries / max_total_wait: None reads SEMANTIC_DIFF_MAX_RETRIES / _MAX_WAIT."""
     if load_env:
         load_user_env()
     name = os.getenv("SEMANTIC_DIFF_PROVIDER", "anthropic")
     if name not in PROVIDERS:
         raise ValueError(f"Unknown provider '{name}'. Known: {', '.join(PROVIDERS)}")
-    return RetryingProvider(PROVIDERS[name](model or os.getenv("SEMANTIC_DIFF_MODEL")))
+    return RetryingProvider(
+        PROVIDERS[name](model or os.getenv("SEMANTIC_DIFF_MODEL")),
+        max_retries=max_retries,
+        max_total_wait=max_total_wait,
+    )

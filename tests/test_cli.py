@@ -202,7 +202,9 @@ class TestCLIWithMockedAnalyzer:
         ):
             runner.invoke(main, ["analyze", "HEAD", "--repo", repo_path, "--model", "custom-model"])
 
-            build_provider.assert_called_once_with(model="custom-model")
+            build_provider.assert_called_once_with(
+                model="custom-model", max_retries=5, max_total_wait=180.0
+            )
             mock_analyzer_class.assert_called_once_with(
                 build_provider.return_value, max_diff_tokens=60_000, max_output_tokens=32_000
             )
@@ -411,3 +413,91 @@ class TestEntryPointRouting:
 
         # reached `mr` itself (asks for --base), not `analyze mr` ("Could not find commit: mr")
         assert "--base is required" in capsys.readouterr().err
+
+
+class TestRateLimitedRun:
+    """A 429 that never clears ends the job with exit 1 and a message saying so,
+    after the retries the flags (or env) asked for."""
+
+    def _run(self, repo_path, *extra, env=None, errors=None):
+        from semantic_diff.providers import RateLimitError, RetryingProvider
+        from tests.test_providers import FlakyProvider
+
+        seen = {}
+
+        def build(model=None, max_retries=None, max_total_wait=None):
+            seen.update(max_retries=max_retries, max_total_wait=max_total_wait)
+            inner = FlakyProvider(*(errors or [RateLimitError("429 quota")] * 20))
+            seen["inner"] = inner
+            return RetryingProvider(
+                inner,
+                max_retries=max_retries,
+                max_total_wait=max_total_wait,
+                sleep=lambda s: None,
+                jitter=lambda low, high: 0.0,
+            )
+
+        with patch("semantic_diff.cli.build_provider", side_effect=build):
+            result = CliRunner().invoke(
+                main, ["analyze", "HEAD", "--repo", repo_path, *extra], env=env
+            )
+        return result, seen
+
+    def test_exits_1_saying_it_was_rate_limited(self, temp_git_repo):
+        repo_path, _, _ = temp_git_repo
+
+        result, seen = self._run(repo_path, "--max-retries", "2", "--no-redact")
+
+        assert result.exit_code == 1
+        assert "Error: Rate limited by the LLM API (HTTP 429) after 3 attempts" in result.stderr
+        assert seen["inner"].calls == 3
+
+    def test_other_api_failures_read_differently(self, temp_git_repo):
+        from semantic_diff.providers import TransientError
+
+        repo_path, _, _ = temp_git_repo
+
+        result, _ = self._run(
+            repo_path, "--max-retries", "1", errors=[TransientError("503 overloaded")] * 5
+        )
+
+        assert result.exit_code == 1
+        assert "Error: LLM API call failed after 2 attempts" in result.stderr
+        assert "Rate limited" not in result.stderr
+
+    def test_defaults_suit_ci(self, temp_git_repo):
+        repo_path, _, _ = temp_git_repo
+
+        _, seen = self._run(repo_path, env={"SEMANTIC_DIFF_MAX_RETRIES": None})
+
+        assert (seen["max_retries"], seen["max_total_wait"]) == (5, 180.0)
+
+    def test_env_sets_the_policy(self, temp_git_repo):
+        repo_path, _, _ = temp_git_repo
+
+        _, seen = self._run(
+            repo_path, env={"SEMANTIC_DIFF_MAX_RETRIES": "8", "SEMANTIC_DIFF_MAX_WAIT": "300"}
+        )
+
+        assert (seen["max_retries"], seen["max_total_wait"]) == (8, 300.0)
+
+    def test_flags_win_over_env(self, temp_git_repo):
+        repo_path, _, _ = temp_git_repo
+
+        _, seen = self._run(
+            repo_path,
+            "--max-retries",
+            "1",
+            "--max-retry-wait",
+            "20",
+            env={"SEMANTIC_DIFF_MAX_RETRIES": "8", "SEMANTIC_DIFF_MAX_WAIT": "300"},
+        )
+
+        assert (seen["max_retries"], seen["max_total_wait"]) == (1, 20.0)
+
+    def test_negative_retries_are_a_usage_error(self, temp_git_repo):
+        repo_path, _, _ = temp_git_repo
+
+        result, _ = self._run(repo_path, "--max-retries", "-1")
+
+        assert result.exit_code == 2

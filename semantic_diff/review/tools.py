@@ -229,7 +229,7 @@ class Toolbox:
         if b"\0" in data[:8000]:
             raise ToolError(f"{path} is a binary file")
         text = data.decode("utf-8", errors="replace")
-        return self.redactor.lines(text) if self.redactor else text.splitlines()
+        return self.redactor.lines(text, path) if self.redactor else text.splitlines()
 
     def _erased_hit(self, hit: str) -> str:
         """path:line:text - only the text is a file's content"""
@@ -239,7 +239,7 @@ class Toolbox:
         number, sep2, text = rest.partition(":")
         if not (sep and sep2 and number.isdigit()):
             return self.redactor(hit)
-        return f"{path}:{number}:{self.redactor(text)}"
+        return f"{path}:{number}:{self.redactor(text, path)}"
 
     def _object(self, side: str, sha: str, path: str):
         tree = self.repo.commit(sha).tree

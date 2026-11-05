@@ -665,7 +665,7 @@ class TestRetryingConverse:
     def test_gives_up_with_provider_error(self):
         inner = ScriptedConverser(*[TransientError("drop")] * 3)
         retrying = RetryingProvider(
-            inner, max_retries=2, max_total_wait=100.0, sleep=lambda s: None
+            inner, max_retries=1, max_total_wait=100.0, sleep=lambda s: None
         )
 
         with pytest.raises(ProviderError, match="after 2 attempts"):
@@ -687,5 +687,5 @@ class TestRetryingConverse:
 
         assert [r.getMessage() for r in caplog.records] == [
             "drop; retry 1/3 in 1.0s",
-            "Retry would exceed max_total_wait (2.0s)",
+            "Retry would exceed max_total_wait (2s)",
         ]

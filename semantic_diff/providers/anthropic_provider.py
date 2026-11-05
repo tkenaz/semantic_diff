@@ -21,7 +21,7 @@ from semantic_diff.providers.base import (
     TransientError,
     Turn,
     UserMessage,
-    parse_retry_after,
+    retry_after_from_headers,
 )
 
 # Anthropic prompt caching: a breakpoint on the system prompt and on the
@@ -98,9 +98,7 @@ class AnthropicProvider:
         try:
             return self.client.messages.create(**request)
         except anthropic.RateLimitError as e:
-            raise RateLimitError(
-                str(e), parse_retry_after(e.response.headers.get("retry-after"))
-            ) from e
+            raise RateLimitError(str(e), retry_after_from_headers(e.response.headers)) from e
         except (anthropic.APITimeoutError, anthropic.APIConnectionError) as e:
             raise TransientError(str(e)) from e
         except anthropic.NotFoundError as e:

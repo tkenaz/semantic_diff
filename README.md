@@ -246,9 +246,22 @@ can still vary the output, so treat it as best effort. The Anthropic API
 takes no seed: the `anthropic` provider refuses the variable rather than
 ignore it.
 
-Retries (rate limits honour `Retry-After`, timeouts, 5xx) are handled once for
-all providers: `SEMANTIC_DIFF_MAX_RETRIES` (attempts, default 3) and
-`SEMANTIC_DIFF_MAX_WAIT` (seconds, default 30).
+Retries (rate limits, timeouts, 5xx) are handled once for all providers, with
+defaults sized for CI, where a shared key can be rate limited for a minute or
+more. A 429 waits as long as the server asks (`retry-after-ms`, `Retry-After`
+in seconds or as a date, or Anthropic's `anthropic-ratelimit-*-reset` for the
+exhausted limit); without a hint the wait doubles from 2s (capped at 60s per
+step, plus 10-30% jitter). Every command that calls a model takes:
+
+| Flag | Env | Default | |
+|---|---|---|---|
+| `--max-retries` | `SEMANTIC_DIFF_MAX_RETRIES` | 5 | retries after the first attempt; 0 turns retries off |
+| `--max-retry-wait` | `SEMANTIC_DIFF_MAX_WAIT` | 180 | seconds one call may spend waiting between retries |
+
+When they run out, the job exits 1 and says which it was: `Error: Rate limited
+by the LLM API (HTTP 429) after ...` (the key's quota: retry later, run fewer
+jobs on the key, or allow longer waits) or `Error: LLM API call failed after
+...` (timeouts, 5xx).
 
 ### Diff budget
 
@@ -294,6 +307,19 @@ semantic-diff review --gitlab-env --json   # inside a GitLab MR pipeline
   keeps one placeholder everywhere and line numbers still hold. The report
   says how many values were erased. `mr` and `analyze` erase the same way
   (diff, title, description, commit subjects), with the same `--no-redact`.
+- Fixture data is not personal data. Addresses on names reserved for
+  documentation and tests (RFC 2606 / RFC 6761: `example.com`, `example.net`,
+  `example.org`, `*.test`, `*.example`, `*.invalid`, `localhost`) are never
+  erased. `--pii-exclude GLOB` (repeatable; `SEMANTIC_DIFF_PII_EXCLUDE`,
+  space-separated; off by default) names files whose personal data is
+  synthetic: there only secrets are erased, plus any value already erased in
+  another file, so one value keeps one placeholder. Same pattern syntax as
+  `--withhold`; a leading `**/` also matches at the root.
+
+  ```bash
+  semantic-diff review --gitlab-env --pii-exclude 'tests/**' --pii-exclude '**/fixtures/**'
+  SEMANTIC_DIFF_PII_EXCLUDE='tests/** **/fixtures/**' semantic-diff mr --base origin/main
+  ```
 - Files where secrets live by convention are never read by the tools,
   whatever their contents: `read_file` and `read_base` refuse them and
   `grep` leaves their hits out (and says how many). Redaction is then a
