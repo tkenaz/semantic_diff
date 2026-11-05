@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-05
+
 ### Changed
 - **Breaking:** `SEMANTIC_DIFF_MAX_RETRIES` counts retries after the first
   attempt, not attempts (0 now means no retry). Defaults are sized for CI:
