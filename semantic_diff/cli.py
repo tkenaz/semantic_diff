@@ -23,7 +23,9 @@ from semantic_diff.gitlab_env import gitlab_mr_context
 from semantic_diff.gitlab_note import MergeRequestNote, MergeRequestTarget, NoteError
 from semantic_diff.models import ChangeSet, FileChange
 from semantic_diff.parsers.git_parser import GitParser
+from semantic_diff.path_globs import PathGlobs
 from semantic_diff.providers import build_provider
+from semantic_diff.providers.retrying import DEFAULT_MAX_RETRIES, DEFAULT_MAX_TOTAL_WAIT
 from semantic_diff.redaction import Redactor
 from semantic_diff.review.agent import ReviewAgent, ReviewLimits
 from semantic_diff.review.corpus import RulesCorpus
@@ -95,6 +97,48 @@ _redact_option = click.option(
     "before the model sees them",
 )
 
+_pii_exclude_option = click.option(
+    "--pii-exclude",
+    multiple=True,
+    metavar="GLOB",
+    envvar="SEMANTIC_DIFF_PII_EXCLUDE",
+    help="Files whose personal data is synthetic (e.g. 'tests/**', '**/fixtures/**'): "
+    "only secrets are erased there. A pattern without '/' matches the file name. "
+    "Repeatable; the env var takes them space-separated. Addresses on reserved "
+    "names (example.com, *.test, *.invalid, localhost, ...) are never erased",
+)
+
+_retry_options = [
+    click.option(
+        "--max-retries",
+        type=click.IntRange(min=0),
+        default=DEFAULT_MAX_RETRIES,
+        show_default=True,
+        envvar="SEMANTIC_DIFF_MAX_RETRIES",
+        help="Retries of one LLM call after a rate limit (429), timeout or 5xx",
+    ),
+    click.option(
+        "--max-retry-wait",
+        type=click.FloatRange(min=0),
+        default=DEFAULT_MAX_TOTAL_WAIT,
+        show_default=True,
+        envvar="SEMANTIC_DIFF_MAX_WAIT",
+        help="Seconds one LLM call may spend waiting between retries; "
+        "the server's Retry-After is honoured within it",
+    ),
+]
+
+
+def _with(options, command):
+    for option in reversed(options):
+        command = option(command)
+    return command
+
+
+def _retry_config(command):
+    """Retry policy for the LLM calls, shared by every command that makes them."""
+    return _with(_retry_options, command)
+
 
 def _output_options(command):
     """Options shared by every analysis command."""
@@ -108,6 +152,8 @@ def _output_options(command):
         ),
         click.option("--verbose", "-v", is_flag=True, help="Verbose output"),
         _redact_option,
+        _pii_exclude_option,
+        *_retry_options,
         click.option(
             "--max-diff-tokens",
             type=click.IntRange(min=1),
@@ -125,9 +171,7 @@ def _output_options(command):
             help="Ceiling for the model's answer; only tokens actually written are billed",
         ),
     ]
-    for option in reversed(options):
-        command = option(command)
-    return command
+    return _with(options, command)
 
 
 @main.command(name="analyze")
@@ -264,6 +308,8 @@ def mr_cmd(
     "(it holds the diff and the code the reviewer read: keep it where the code may live)",
 )
 @_redact_option
+@_pii_exclude_option
+@_retry_config
 @click.option(
     "--withhold",
     multiple=True,
@@ -296,6 +342,9 @@ def review_cmd(
     rules: Optional[Path],
     transcript: Optional[Path],
     redact: bool,
+    pii_exclude: Tuple[str, ...],
+    max_retries: int,
+    max_retry_wait: float,
     withhold: Tuple[str, ...],
     gitlab_comment: bool,
 ):
@@ -310,11 +359,13 @@ def review_cmd(
                 _clear_gitlab_comment()
             sys.exit(0)
 
-        redactor = Redactor() if redact else None
+        redactor = Redactor(PathGlobs(pii_exclude)) if redact else None
         if redactor:
             change_set, files = redactor.change(change_set, files)
 
-        provider = build_provider(model=model)
+        provider = build_provider(
+            model=model, max_retries=max_retries, max_total_wait=max_retry_wait
+        )
         if not _supports_tools(provider):
             raise ValueError(
                 "The configured provider does not support tool calling, which review needs."
@@ -408,6 +459,9 @@ def _run(
     brief: bool,
     verbose: bool,
     redact: bool,
+    pii_exclude: Tuple[str, ...],
+    max_retries: int,
+    max_retry_wait: float,
     max_diff_tokens: int,
     max_output_tokens: int,
 ):
@@ -434,7 +488,7 @@ def _run(
             sys.exit(0)
 
         if redact:
-            redactor = Redactor()
+            redactor = Redactor(PathGlobs(pii_exclude))
             change_set, files = redactor.change(change_set, files)
             if verbose:
                 click.echo(f"Redacted {redactor.erased} value(s) before the model", err=True)
@@ -443,7 +497,7 @@ def _run(
             click.echo("Calling LLM for analysis...", err=True)
 
         analyzer = LLMAnalyzer(
-            build_provider(model=model),
+            build_provider(model=model, max_retries=max_retries, max_total_wait=max_retry_wait),
             max_diff_tokens=max_diff_tokens,
             max_output_tokens=max_output_tokens,
         )

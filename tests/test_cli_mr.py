@@ -152,7 +152,9 @@ class TestMrLocal:
                 ],
             )
 
-        build_provider.assert_called_once_with(model="claude-sonnet-4.6")
+        build_provider.assert_called_once_with(
+            model="claude-sonnet-4.6", max_retries=5, max_total_wait=180.0
+        )
 
 
 class TestMrGitlabEnv:

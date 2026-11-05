@@ -25,10 +25,12 @@ from semantic_diff.providers import (
     OpenAICompatProvider,
     ProviderError,
     RateLimitError,
+    RetriesExhaustedError,
     RetryingProvider,
     TransientError,
     build_provider,
 )
+from semantic_diff.providers.base import parse_retry_after, retry_after_from_headers
 
 REQUEST = httpx.Request("POST", "https://llm.example/v1")
 
@@ -270,9 +272,7 @@ class TestAdapterErrorMapping:
         assert exc.value.retry_after == 7.0
 
     def test_rate_limit_without_parsable_header_has_no_retry_after(self, vendor):
-        error = VENDOR_ERRORS[vendor]["rate_limit"](
-            {"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"}
-        )
+        error = VENDOR_ERRORS[vendor]["rate_limit"]({"retry-after": "soon"})
         provider = _adapter(vendor, _failing_client(vendor, error))
 
         with pytest.raises(RateLimitError) as exc:
@@ -377,7 +377,7 @@ class TestRetryingProvider:
         inner = FlakyProvider(TransientError("t0"), TransientError("t1"))
 
         with pytest.raises(ProviderError):
-            self._retrying(inner, max_retries=2).complete("p", max_tokens=5)
+            self._retrying(inner, max_retries=1).complete("p", max_tokens=5)
 
         assert self.sleeps == [1.0]
 
@@ -406,19 +406,19 @@ class TestRetryingProvider:
 
         assert seen == [(0.1, 0.3)]
 
-    def test_single_attempt_means_no_retry(self):
+    def test_zero_retries_means_a_single_attempt(self):
         inner = FlakyProvider(TransientError("t0"))
 
         with pytest.raises(ProviderError, match="failed after 1 attempts"):
-            self._retrying(inner, max_retries=1).complete("p", max_tokens=5)
+            self._retrying(inner, max_retries=0).complete("p", max_tokens=5)
 
         assert self.sleeps == []
 
-    def test_at_least_one_attempt_is_required(self):
+    def test_negative_retries_are_refused(self):
         with pytest.raises(ValueError, match="max_retries"):
-            RetryingProvider(FlakyProvider(), max_retries=0)
+            RetryingProvider(FlakyProvider(), max_retries=-1)
 
-    def test_default_base_delay_is_one_second(self):
+    def test_default_base_delay_is_two_seconds(self):
         sleeps = []
         inner = FlakyProvider(TransientError("t"))
 
@@ -426,7 +426,7 @@ class TestRetryingProvider:
             inner, max_retries=2, sleep=sleeps.append, jitter=lambda low, high: 0.0
         ).complete("p", max_tokens=5)
 
-        assert sleeps == [1.0]
+        assert sleeps == [2.0]
 
     def test_wait_budget_default_comes_from_env(self):
         inner = FlakyProvider(TransientError("t"))
@@ -471,7 +471,7 @@ class TestRetryingProvider:
         inner = FlakyProvider(*[TransientError(f"t{i}") for i in range(5)])
 
         with pytest.raises(ProviderError, match="failed after 2 attempts.*t1"):
-            self._retrying(inner, max_retries=2).complete("p", max_tokens=5)
+            self._retrying(inner, max_retries=1).complete("p", max_tokens=5)
 
         assert inner.calls == 2
 
@@ -502,7 +502,212 @@ class TestRetryingProvider:
         with pytest.raises(ProviderError):
             retrying.complete("p", max_tokens=5)
 
-        assert inner.calls == 4
+        assert inner.calls == 5  # the first attempt and 4 retries
+
+
+# 2026-11-05T12:00:00Z: a fixed clock for the date-based headers
+NOW = 1793880000.0
+
+
+class TestRetryAfterHeaders:
+    def test_seconds(self):
+        assert retry_after_from_headers({"retry-after": "7"}) == 7.0
+
+    def test_http_date_counts_from_now(self):
+        headers = {"retry-after": "Thu, 05 Nov 2026 12:00:30 GMT"}
+
+        assert retry_after_from_headers(headers, now=NOW) == 30.0
+
+    def test_a_date_in_the_past_means_no_wait(self):
+        assert parse_retry_after("Thu, 05 Nov 2026 11:00:00 GMT", now=NOW) == 0.0
+
+    def test_milliseconds_win_over_seconds(self):
+        headers = {"retry-after-ms": "1500", "retry-after": "2"}
+
+        assert retry_after_from_headers(headers) == 1.5
+
+    def test_anthropic_reset_of_the_exhausted_limit(self):
+        headers = {
+            "anthropic-ratelimit-requests-remaining": "12",
+            "anthropic-ratelimit-requests-reset": "2026-11-05T12:00:05Z",
+            "anthropic-ratelimit-input-tokens-remaining": "0",
+            "anthropic-ratelimit-input-tokens-reset": "2026-11-05T12:00:42Z",
+        }
+
+        assert retry_after_from_headers(headers, now=NOW) == 42.0
+
+    def test_retry_after_wins_over_anthropic_resets(self):
+        headers = {
+            "retry-after": "9",
+            "anthropic-ratelimit-tokens-remaining": "0",
+            "anthropic-ratelimit-tokens-reset": "2026-11-05T12:00:42Z",
+        }
+
+        assert retry_after_from_headers(headers, now=NOW) == 9.0
+
+    @pytest.mark.parametrize(
+        "headers",
+        [
+            {},
+            {"retry-after": "soon"},
+            {"retry-after": "nan"},
+            # a reset of a limit that is not exhausted says nothing about this 429
+            {
+                "anthropic-ratelimit-requests-remaining": "3",
+                "anthropic-ratelimit-requests-reset": "2026-11-05T12:00:42Z",
+            },
+            {
+                "anthropic-ratelimit-tokens-remaining": "0",
+                "anthropic-ratelimit-tokens-reset": "not a date",
+            },
+        ],
+    )
+    def test_no_usable_hint(self, headers):
+        assert retry_after_from_headers(headers, now=NOW) is None
+
+    def test_anthropic_429_reaches_the_retry_loop_with_its_reset_hint(self):
+        # The SDK error the adapter sees on a real 429 that carries no retry-after
+        reset = "2099-01-01T00:00:00Z"
+        error = VENDOR_ERRORS["anthropic"]["rate_limit"](
+            {
+                "anthropic-ratelimit-output-tokens-remaining": "0",
+                "anthropic-ratelimit-output-tokens-reset": reset,
+            }
+        )
+        provider = _adapter("anthropic", _failing_client("anthropic", error))
+
+        with pytest.raises(RateLimitError) as exc:
+            provider.complete("p", max_tokens=1)
+
+        assert exc.value.retry_after > 0
+
+
+class TestRetryPolicyForCI:
+    """A shared key under load answers 429 for tens of seconds: the default
+    policy must wait that out, honour the server's hint and say why it gave up."""
+
+    def _retrying(self, inner, **kwargs):
+        self.sleeps = []
+        defaults = dict(sleep=self.sleeps.append, jitter=lambda low, high: 0.0)
+        return RetryingProvider(inner, **{**defaults, **kwargs})
+
+    def test_defaults_ride_out_a_minute_of_rate_limiting(self, monkeypatch):
+        monkeypatch.delenv("SEMANTIC_DIFF_MAX_RETRIES", raising=False)
+        monkeypatch.delenv("SEMANTIC_DIFF_MAX_WAIT", raising=False)
+        inner = FlakyProvider(*[RateLimitError("429") for _ in range(5)])
+
+        result = self._retrying(inner).complete("p", max_tokens=5)
+
+        assert result.text == "ok"
+        assert inner.calls == 6
+        assert self.sleeps == [2.0, 4.0, 8.0, 16.0, 32.0]
+        assert sum(self.sleeps) > 60
+
+    def test_backoff_doubles_and_is_capped_per_step(self):
+        inner = FlakyProvider(*[TransientError(f"t{i}") for i in range(6)])
+
+        self._retrying(
+            inner, max_retries=6, base_delay=1.0, max_delay=10.0, max_total_wait=1000.0
+        ).complete("p", max_tokens=5)
+
+        assert self.sleeps == [1.0, 2.0, 4.0, 8.0, 10.0, 10.0]
+
+    def test_jitter_spreads_each_step_by_ten_to_thirty_percent(self):
+        inner = FlakyProvider(TransientError("t0"), TransientError("t1"))
+
+        self._retrying(
+            inner, max_retries=2, max_total_wait=100.0, jitter=lambda low, high: high
+        ).complete("p", max_tokens=5)
+
+        assert self.sleeps == [pytest.approx(2.6), pytest.approx(5.2)]
+
+    def test_retry_after_is_honoured_over_backoff(self):
+        inner = FlakyProvider(
+            RateLimitError("429", retry_after=20.0),
+            RateLimitError("429", retry_after=None),
+            RateLimitError("429", retry_after=0.5),
+        )
+
+        self._retrying(inner, max_retries=5, max_total_wait=100.0).complete("p", max_tokens=5)
+
+        # the second wait is backoff step 2 (2s * 2^1): hints do not reset the curve
+        assert self.sleeps == [20.0, 4.0, 0.5]
+
+    def test_retry_after_from_a_mocked_anthropic_client(self):
+        error = VENDOR_ERRORS["anthropic"]["rate_limit"]({"retry-after": "13"})
+        client = Mock()
+        client.messages.create.side_effect = [
+            error,
+            _anthropic_message(TextBlock(type="text", text="done")),
+        ]
+        provider = self._retrying(
+            AnthropicProvider(client=client, model="m"), max_retries=5, max_total_wait=180.0
+        )
+
+        assert provider.complete("p", max_tokens=5).text == "done"
+        assert self.sleeps == [13.0]
+
+    def test_gives_up_on_a_persistent_429_and_says_it_was_rate_limited(self):
+        inner = FlakyProvider(*[RateLimitError("quota", retry_after=None) for _ in range(9)])
+
+        with pytest.raises(RetriesExhaustedError) as exc:
+            self._retrying(inner, max_retries=3, max_total_wait=100.0).complete("p", max_tokens=5)
+
+        assert exc.value.rate_limited
+        assert exc.value.attempts == 4 == inner.calls
+        assert exc.value.waited == 14.0
+        message = str(exc.value)
+        assert message.startswith("Rate limited by the LLM API (HTTP 429) after 4 attempts")
+        assert "SEMANTIC_DIFF_MAX_WAIT" in message and "--max-retries" in message
+
+    def test_gives_up_when_the_server_asks_for_more_than_the_budget(self):
+        inner = FlakyProvider(RateLimitError("quota", retry_after=600.0))
+
+        with pytest.raises(RetriesExhaustedError) as exc:
+            self._retrying(inner, max_total_wait=180.0).complete("p", max_tokens=5)
+
+        assert self.sleeps == []
+        assert exc.value.rate_limited
+        assert "asked to wait 600s" in str(exc.value)
+        assert "pass the 180s budget" in str(exc.value)
+
+    def test_other_transient_failures_are_not_reported_as_rate_limits(self):
+        inner = FlakyProvider(*[TransientError("503 overloaded") for _ in range(3)])
+
+        with pytest.raises(RetriesExhaustedError) as exc:
+            self._retrying(inner, max_retries=2, max_total_wait=100.0).complete("p", max_tokens=5)
+
+        assert not exc.value.rate_limited
+        assert str(exc.value).startswith("LLM API call failed after 3 attempts")
+        assert "Rate limited" not in str(exc.value)
+
+    def test_the_last_error_decides_the_kind(self):
+        # a 429 that cleared into an outage is an outage
+        inner = FlakyProvider(RateLimitError("429"), TransientError("timeout"))
+
+        with pytest.raises(RetriesExhaustedError) as exc:
+            self._retrying(inner, max_retries=1, max_total_wait=100.0).complete("p", max_tokens=5)
+
+        assert not exc.value.rate_limited
+
+    def test_wait_budget_from_env(self, monkeypatch):
+        monkeypatch.setenv("SEMANTIC_DIFF_MAX_WAIT", "300")
+
+        assert RetryingProvider(FlakyProvider()).max_total_wait == 300.0
+
+    def test_a_malformed_env_value_is_named(self, monkeypatch):
+        monkeypatch.setenv("SEMANTIC_DIFF_MAX_RETRIES", "lots")
+
+        with pytest.raises(ValueError, match="SEMANTIC_DIFF_MAX_RETRIES"):
+            RetryingProvider(FlakyProvider())
+
+    def test_build_provider_passes_the_policy_through(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        monkeypatch.delenv("SEMANTIC_DIFF_PROVIDER", raising=False)
+
+        provider = build_provider(load_env=False, max_retries=2, max_total_wait=45.0)
+
+        assert (provider.max_retries, provider.max_total_wait) == (2, 45.0)
 
 
 class TestBuildProvider:
@@ -536,7 +741,7 @@ class TestBuildProvider:
             raise httpx.ConnectError("offline", request=request)
 
         provider.inner.client._client.send = capture
-        provider.max_retries = 1
+        provider.max_retries = 0
 
         with pytest.raises(ProviderError):
             provider.complete("p", max_tokens=64_000)

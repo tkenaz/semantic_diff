@@ -22,7 +22,7 @@ from semantic_diff.providers.base import (
     TransientError,
     Turn,
     UserMessage,
-    parse_retry_after,
+    retry_after_from_headers,
 )
 
 # Anthropic-style prompt caching; gateways in front of Anthropic models pass it
@@ -101,9 +101,7 @@ class OpenAICompatProvider:
         try:
             return self.client.chat.completions.create(**request)
         except openai.RateLimitError as e:
-            raise RateLimitError(
-                str(e), parse_retry_after(e.response.headers.get("retry-after"))
-            ) from e
+            raise RateLimitError(str(e), retry_after_from_headers(e.response.headers)) from e
         except (openai.APITimeoutError, openai.APIConnectionError) as e:
             raise TransientError(str(e)) from e
         except openai.NotFoundError as e:
